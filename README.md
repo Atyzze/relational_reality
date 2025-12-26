@@ -1,6 +1,6 @@
 sSs... working sstill .. .
 
-# Relational Physics — logs + figures + code (WPW? nope 😄 back to Python)
+# Relational Physics — logs + figures + code
 
 This repo is a self-contained dump of:
 - **simulation logs**
