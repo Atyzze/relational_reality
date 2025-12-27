@@ -1,0 +1,9 @@
+TODO:
+
+make v4 with a explanation/evolution of the entire arc of step count going up to the late crystale period
+fix/add python install script, mention need of venv for eazs of install/portability
+pip install xXx
+structure/cleanup code
+multi thread the graph generation
+investigate constraints around being able to multithread the computation of the python code/model used
+is it even possible? leaning towards no, but lets gather more data .. .
