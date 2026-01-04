@@ -1,25 +1,3 @@
-"""
-Relational Physics v3.3.5 — Master Script (Single-file)
--------------------------------------------------------
-Core upgrades vs v3.3.4:
-1) Anti-crunch Pauli exclusion:
-   E_pauli(i) = LAMBDA_PAULI * exp( rho_i / RHO0 ), where rho_i = |psi_i|^2
-2) Cosmological expansion bias:
-   A baseline negative edge chemical potential LAMBDA_E_BASE (<0) rewards edges.
-   A PI controller adds a small corrective DELTA_LAMBDA_E to hit mean degree target.
-3) More robust degree control:
-   - Controller acts on DELTA_LAMBDA_E (not the baseline)
-   - Anti-windup
-   - Wider controller clamp
-4) Keeps: Big Bang init (0 edges), gauge checks, correlator, quench (optional), light cone,
-   curvature–density diagnostic.
-
-If mean degree still overshoots:
-- increase MU_DEG2 modestly (e.g. 1.6–2.2),
-- increase LAMBDA_E_CTRL_MAX (e.g. 6–10),
-- or reduce P_REWIRE / P_TRIADIC_TOGGLE.
-"""
-
 import math
 import random
 from collections import defaultdict, deque
