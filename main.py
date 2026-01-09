@@ -1,30 +1,24 @@
-import math
-import random
+import ot  # Requires: pip install POT
+import os, math, random, time, datetime, threading, warnings
+import scipy.sparse
+import numpy as np
+import networkx as nx
+import matplotlib.pyplot as plt
+warnings.filterwarnings("ignore", category=FutureWarning, module="sklearn")
+from sklearn.manifold import MDS
 from collections import defaultdict, deque
 
-import numpy as np
-import networkx as nx
-import matplotlib.pyplot as plt
-from sklearn.manifold import MDS
-
-import networkx as nx
-import numpy as np
-import matplotlib.pyplot as plt
-import ot  # Requires: pip install POT
-
-# -----------------------
 # CONFIG
-# -----------------------
-SEED = 44
+SEED = 1
 random.seed(SEED)
 np.random.seed(SEED)
+N = 1000
 
-N = 4444
-
-# Monte Carlo schedule
-EQUIL_MOVES = 4_444_444
+EQUIL_MOVES = 4_000_000
 PROP_MOVES  = 12_000
-LOG_EVERY   = 250
+LOG_EVERY   = 10_000
+
+LAMBDA_E_BASE = -1.0     # "cosmological expansion" (reward edges)
 
 # Move mix
 P_PSI    = 0.55
@@ -36,45 +30,23 @@ KAPPA      = 0.6
 BETA       = 0.9
 MASS2      = 0.35
 LAMBDA_PSI = 0.08
-LAMBDA_G   = 0.02
+LAMBDA_G   = -1.35
 
 # Pauli exclusion (anti-crunch)
-LAMBDA_PAULI = 0.15   # strength of exp(rho/rho0)
+LAMBDA_PAULI = 0.05   # strength of exp(rho/rho0)
 RHO0         = 4.0     # density scale for the exponential
 
 # Temperature + steps
-TEMP       = 0.5
+TEMP       = 0.2
 PSI_STEP   = 0.25
 THETA_STEP = 0.35
 
 # Geometry / degree costs
-MU_DEG2 = 1.2  # start a touch higher than 1.35 to fight runaway degree
-
-# Triangle shaping (optional)
-USE_TRIANGLE_REWARD = False
-GAMMA_T = 0.00
+MU_DEG2 = 2.5  # start a touch higher than 1.35 to fight runaway degree
 
 # Rewire proposal mix
 USE_TRIADIC_TOGGLE = True
 P_TRIADIC_TOGGLE   = 0.65  # remainder uses balanced MH global kernel
-
-# Degree control target
-USE_DEG_CONTROL    = False
-DEG_TARGET         = 7.0
-DEG_CONTROL_EVERY  = 2 * LOG_EVERY
-
-# Expansion + controller decomposition:
-# lambda_E_total = LAMBDA_E_BASE + DELTA_LAMBDA_E
-# (lambda_E_total multiplies E = #edges in the action)
-LAMBDA_E_BASE = -44.0     # "cosmological expansion" (reward edges)
-DELTA_LAMBDA_E = 0.0      # PI controller state
-DELTA_LAMBDA_E_MIN = -100.0
-DELTA_LAMBDA_E_MAX =  100.0
-
-# PI gains (tuned to be calm)
-DEG_KP      = 0.005
-DEG_KI      = 0.000002
-DEG_I_CLAMP = 12_000.0
 
 # Correlator
 MAX_DIST_CORR = 20
@@ -97,7 +69,7 @@ QUENCH_RADIUS = 2
 QUENCH_STRENGTH = 0.5
 MAX_DIST_QUENCH = 10
 QUENCH_TWO_STAGE = True
-QUENCH_ALLOW_REWIRE = False
+QUENCH_ALLOW_REWIRE = True
 QUENCH_P_REWIRE = 0.15
 QUENCH_RELAX_MOVES_STAGE1 = 4000
 QUENCH_RELAX_MOVES_STAGE2 = 20000
@@ -109,6 +81,103 @@ MIN_SHELL_QUENCH = 8
 XI_FIT_MIN = 2
 XI_FIT_MAX = 10
 XI_MIN_COUNT = 140
+
+def analyze_dimensionality(G, plot=True):
+    N = G.number_of_nodes()
+
+    # --- 1. Hausdorff Dimension (Volume Growth) ---
+    # Pick a few random centers to average out local lumpiness
+    centers = np.random.choice(list(G.nodes()), size=min(10, N), replace=False)
+
+    rs_all = []
+    counts_all = []
+
+    for source in centers:
+        # You already have bfs_distances logic in your code
+        dists = dict(nx.single_source_shortest_path_length(G, source))
+        max_d = max(dists.values())
+
+        # Cumulative count N(r)
+        counts = np.zeros(max_d + 1)
+        for d in dists.values():
+            counts[d] += 1
+        cumulative = np.cumsum(counts)
+
+        # Filter strictly for the "middle" range to avoid boundary effects
+        # Usually r=2 to r=diameter/2 is safe for N=1000
+        valid_r = np.arange(1, len(cumulative))
+        rs_all.extend(valid_r)
+        counts_all.extend(cumulative[1:])
+
+    # Log-Log Fit
+    log_r = np.log(rs_all)
+    log_n = np.log(counts_all)
+
+    # Fit only the middle section (e.g., radius 2 to 6 for N=1000)
+    # This avoids the "discretization noise" at r=1 and "finite size" at r=max
+    mask = (log_r > np.log(1.5)) & (log_r < np.log(8))
+
+    d_H = np.nan
+    if np.sum(mask) > 5:
+        slope, intercept = np.polyfit(log_r[mask], log_n[mask], 1)
+        d_H = slope
+
+    # --- 2. Spectral Dimension (via Laplacian Eigenvalues) ---
+    # L = D - A
+    L = nx.laplacian_matrix(G).astype(float)
+
+    # Exact eigenvalues (fast enough for N=1000)
+    # Note: eigenvalues of Laplacian are 0 = lam_1 <= lam_2 ... <= lam_N
+    evals = scipy.linalg.eigh(L.todense(), eigvals_only=True)
+
+    # Heat Kernel Trace: P(t) = (1/N) * sum(exp(-lambda * t))
+    # We scan t from small to large
+    t_vals = np.logspace(-1, 2, 50)
+    p_t = []
+    for t in t_vals:
+        # Sum of exponentials
+        trace = np.sum(np.exp(-evals * t))
+        p_t.append(trace / N)
+
+    p_t = np.array(p_t)
+
+    # Slope of log(P(t)) vs log(t) is -dS/2
+    # We look for a linear region in log-log
+    log_t = np.log(t_vals)
+    log_p = np.log(p_t)
+
+    # For N=1000, valid region is usually t=0.5 to t=5.0
+    mask_spec = (t_vals > 0.5) & (t_vals < 5.0)
+
+    d_S = np.nan
+    if np.sum(mask_spec) > 5:
+        slope_s, _ = np.polyfit(log_t[mask_spec], log_p[mask_spec], 1)
+        d_S = -2 * slope_s
+
+    if plot:
+        fig, ax = plt.subplots(1, 2, figsize=(10, 4))
+
+        # Hausdorff Plot
+        ax[0].scatter(log_r, log_n, alpha=0.1, color='k')
+        if not np.isnan(d_H):
+            ax[0].plot(log_r[mask], slope*log_r[mask] + intercept, 'r-', lw=2)
+            ax[0].set_title(f"Hausdorff: Volume ~ r^{d_H:.2f}")
+        ax[0].set_xlabel("log(radius)")
+        ax[0].set_ylabel("log(cumulative nodes)")
+
+        # Spectral Plot
+        ax[1].plot(log_t, log_p, 'k.-')
+        if not np.isnan(d_S):
+            ax[1].plot(log_t[mask_spec], slope_s*log_t[mask_spec] + _, 'r-', lw=2)
+            ax[1].set_title(f"Spectral: P(t) ~ t^{{-{d_S:.2f}/2}}")
+        ax[1].set_xlabel("log(diffusion time)")
+        ax[1].set_ylabel("log(return prob)")
+
+        plt.tight_layout()
+        plt.savefig(FRAMES_DIR+"/N="+str(N)+"_S="+str(EQUIL_MOVES) + "_d.png", dpi=300, bbox_inches="tight")
+        plt.close()
+
+    return d_H, d_S
 
 def compute_ollivier_ricci_flow(G):
     """
@@ -135,11 +204,8 @@ def compute_ollivier_ricci_flow(G):
         # We assume uniform distribution over neighbors (Standard Ricci)
         # Advanced: You could weight this by |psi|^2 if you wanted.
 
-        nbrs_u = list(G.neighbors(u))
-        nbrs_v = list(G.neighbors(v))
-
-        # Mass per neighbor (Sum must be 1.0)
-        # We include the node itself (lazy walk) to stabilize calculation
+        nbrs_u = [u] + list(G.neighbors(u))
+        nbrs_v = [v] + list(G.neighbors(v))
         mu_u = np.ones(len(nbrs_u)) / len(nbrs_u)
         mu_v = np.ones(len(nbrs_v)) / len(nbrs_v)
 
@@ -211,7 +277,9 @@ def plot_general_relativity_check(G):
     plt.ylabel("Ricci Curvature (R) -> Geometry", fontsize=12)
     plt.grid(True, alpha=0.3)
     plt.legend()
-    plt.show()
+    plt.tight_layout()
+    plt.savefig(FRAMES_DIR+"/N="+str(N)+"_S="+str(EQUIL_MOVES) + "_g.png", dpi=300, bbox_inches="tight")
+    plt.close()
 
     print("-" * 40)
     print(f"RESULTS:")
@@ -219,22 +287,8 @@ def plot_general_relativity_check(G):
     print(f"Intercept (Cosmological Constant): {b:.4f}")
     print("-" * 40)
 
-    if m < -0.0001:
-         print(">> VERDICT: SUCCESS. Negative slope confirms Gravity (Mass creates Convergence).")
-    elif m > 0.05:
-         print(">> VERDICT: FAILURE. Positive slope implies Anti-Gravity.")
-    else:
-         print(">> VERDICT: NEUTRAL. No coupling detected.")
 
-# --- TO RUN IT ---
-# Assuming 'G' is your annealed N=1000 graph:
-# plot_general_relativity_check(G)
-
-
-# -----------------------
-# INIT: BIG BANG (0 edges)
-# -----------------------
-def init_big_bang_graph():
+def init_graph():
     G = nx.Graph()
     G.add_nodes_from(range(N))
     for i in G.nodes():
@@ -304,7 +358,7 @@ def stress_energy_edge(G: nx.Graph, i: int, j: int) -> float:
 
 def lambda_e_total() -> float:
     # expansion bias + controller correction
-    return float(LAMBDA_E_BASE + DELTA_LAMBDA_E)
+    return float(LAMBDA_E_BASE)
 
 def local_energy_around_node_for_psi(G: nx.Graph, i: int) -> float:
     e = self_energy_node(G, i)
@@ -659,8 +713,9 @@ def rewire_mh_balanced_global(G: nx.Graph, mu_deg2: float, adj_sets, rng: np.ran
 
         e1 = local_energy_for_toggle_edge(G, i, j, mu_deg2, adj_sets=adj_sets)
 
-        dS_tri = (GAMMA_T * float(n_common)) if (USE_TRIANGLE_REWARD and GAMMA_T != 0.0) else 0.0
-        dS = (e1 - e0) + dS_tri
+
+        dS = (e1 - e0)
+
 
         E_after = E - 1
         NE_after = P - E_after
@@ -693,8 +748,8 @@ def rewire_mh_balanced_global(G: nx.Graph, mu_deg2: float, adj_sets, rng: np.ran
 
     e1 = local_energy_for_toggle_edge(G, i, j, mu_deg2, adj_sets=adj_sets)
 
-    dS_tri = (-GAMMA_T * float(n_common)) if (USE_TRIANGLE_REWARD and GAMMA_T != 0.0) else 0.0
-    dS = (e1 - e0) + dS_tri
+
+    dS = (e1 - e0)
 
     E_after = E + 1
     NE_after = P - E_after
@@ -739,12 +794,9 @@ def rewire_symmetric_triadic_toggle(G: nx.Graph, mu_deg2: float, adj_sets, rng: 
 
     e1 = local_energy_for_toggle_edge(G, i, j, mu_deg2, adj_sets=adj_sets)
 
-    if USE_TRIANGLE_REWARD and GAMMA_T != 0.0:
-        dS_tri = (GAMMA_T * float(n_common)) if existed else (-GAMMA_T * float(n_common))
-    else:
-        dS_tri = 0.0
 
-    dS = (e1 - e0) + dS_tri
+
+    dS = (e1 - e0)
 
     if metropolis_accept(dS, TEMP):
         return True
@@ -769,16 +821,12 @@ def rewire_move(G, mu_deg2, adj_sets, rng):
 # -----------------------
 # MAIN RUN
 # -----------------------
-def run(show_plot=True):
+def run():
     global MU_DEG2, DELTA_LAMBDA_E
-
-    G = init_big_bang_graph()
+    G = init_graph()
     nodes = list(G.nodes())
     rng = np.random.default_rng(SEED + 123)
     adj_sets = {u: set() for u in G.nodes()}  # starts empty
-
-    print(f">> Relational Physics v3.3.5 | N={N} | init edges={G.number_of_edges()}")
-    print(f">> Expansion baseline λE_base={LAMBDA_E_BASE:.3f} | target <k>={DEG_TARGET:.2f}")
 
     eq_log = {"moves": [], "mean_deg": [], "tri_flux": [], "corr_d1": [],
               "acc_rewire": [], "triangles": [], "lambda_e_total": [], "delta_lambda_e": []}
@@ -787,6 +835,8 @@ def run(show_plot=True):
 
     acc_rew = tot_rew = 0
     integ_err = 0.0
+
+    start_time = time.time()
 
     for t in range(1, EQUIL_MOVES + 1):
         r = random.random()
@@ -799,23 +849,7 @@ def run(show_plot=True):
             ok = rewire_move(G, MU_DEG2, adj_sets, rng)
             acc_rew += int(ok)
 
-        # ---- PI control on mean degree (acts on DELTA_LAMBDA_E only)
-        if USE_DEG_CONTROL and (t % DEG_CONTROL_EVERY == 0):
-            md_now = float(np.mean([G.degree(i) for i in nodes]))
-            err = md_now - DEG_TARGET  # >0 => too many edges => increase lambda_E (more penalty)
 
-            d_p = DEG_KP * err
-
-            at_min = (DELTA_LAMBDA_E <= DELTA_LAMBDA_E_MIN + 1e-12)
-            at_max = (DELTA_LAMBDA_E >= DELTA_LAMBDA_E_MAX - 1e-12)
-            allow_int = (not at_min and not at_max) or (at_min and err > 0) or (at_max and err < 0)
-
-            if allow_int:
-                integ_err = float(np.clip(integ_err + err * DEG_CONTROL_EVERY, -DEG_I_CLAMP, DEG_I_CLAMP))
-
-            d_i = DEG_KI * integ_err
-            DELTA_LAMBDA_E = float(np.clip(DELTA_LAMBDA_E + d_p + d_i,
-                                           DELTA_LAMBDA_E_MIN, DELTA_LAMBDA_E_MAX))
 
         if t % LOG_EVERY == 0 or t == EQUIL_MOVES:
             md = float(np.mean([G.degree(i) for i in nodes]))
@@ -846,6 +880,9 @@ def run(show_plot=True):
 
             tri_count = sum(nx.triangles(G).values()) // 3 if G.number_of_edges() else 0
             ar = acc_rew / max(1, tot_rew)
+            elapsed = time.time() - start_time
+            sps = t / max(1e-9, elapsed)  # steps per second
+            eta = (EQUIL_MOVES - t) / sps # estimated seconds remaining
 
             eq_log["moves"].append(t)
             eq_log["mean_deg"].append(md)
@@ -854,13 +891,19 @@ def run(show_plot=True):
             eq_log["acc_rewire"].append(ar)
             eq_log["triangles"].append(tri_count)
             eq_log["lambda_e_total"].append(lambda_e_total())
-            eq_log["delta_lambda_e"].append(DELTA_LAMBDA_E)
 
-            print(f"  eq {t:6d}/{EQUIL_MOVES} | <k>={md:.2f} | tri#={tri_count:6d} | Re(loop)={tri_flux:.3f} "
-                  f"| d=1 corr={corr1:.3f} | λE={lambda_e_total():+.3f} (Δ={DELTA_LAMBDA_E:+.3f}) | acc(rew)={ar:.2f}")
+            print(f"{t/1e6:.3f}M/{EQUIL_MOVES/1e6:.1f}M | <k>={md:.2f} | tri#={tri_count:6d} | Re(loop)={tri_flux:.4f} "
+                  f"| d=1 corr={corr1:.4f}  acc(rew)={ar:.4f} | {sps:.0f} it/s | ETA {eta:.0f}s" )
+
 
             acc_rew = tot_rew = 0
+            #plot_emergent_geometry(G, t)
 
+
+
+
+
+    #main loop done
     print(">> Equilibration done.")
     tri_count_final = sum(nx.triangles(G).values()) // 3 if G.number_of_edges() else 0
     print(">> triangle count (exact):", tri_count_final)
@@ -900,7 +943,7 @@ def run(show_plot=True):
         n_sources=CORR_SOURCES,
         samples_per_d_per_src=CORR_SAMPLES_PER_D_PER_SRC,
         min_shell=CORR_MIN_SHELL,
-        seed=SEED + 999,
+        seed=SEED,
         k_paths=AVG_K_SHORTEST_PATHS,
     )
     xi_est = estimate_corr_length_masked(ds, corr, corr_counts,
@@ -923,49 +966,70 @@ def run(show_plot=True):
     delta_curv_prof = delta_rho_prof = None
     shell_counts_quench = None
 
+   # -----------------------
+    # QUENCH (ISOLATED COPY)
+    # -----------------------
+    r_resp = float("nan")
+    delta_curv_prof = delta_rho_prof = None
+    shell_counts_quench = None
+
     if DO_QUENCH and G.number_of_edges():
-        print(">> Quench response (Δρ vs Δcurv)...")
-        comp_list = list(comp)
+        print(">> Quench response (Δρ vs Δcurv) [Running on Copy]...")
+
+        # 1. Create a Deep Copy of the Universe
+        G_quench = G.copy()
+
+        # 2. Rebuild adj_sets for the copy (Crucial for rewiring to work)
+        adj_sets_quench = {n: set(G_quench.neighbors(n)) for n in G_quench.nodes()}
+
+        comp_list = list(max(nx.connected_components(G_quench), key=len))
         quench_src = random.choice(comp_list)
 
-        curv_before, sc1 = curvature_profile_vs_distance(G, quench_src, MAX_DIST_QUENCH)
-        rho_before, sc2 = density_profile_vs_distance(G, quench_src, MAX_DIST_QUENCH)
+        # Baseline profiles (measured on the copy)
+        curv_before, sc1 = curvature_profile_vs_distance(G_quench, quench_src, MAX_DIST_QUENCH)
+        rho_before, sc2 = density_profile_vs_distance(G_quench, quench_src, MAX_DIST_QUENCH)
         shell_counts_quench = np.minimum(sc1, sc2)
 
-        region_nodes, _ = nodes_within_radius(G, quench_src, QUENCH_RADIUS)
+        # 3. Inject Energy into the Copy
+        region_nodes, _ = nodes_within_radius(G_quench, quench_src, QUENCH_RADIUS)
         for v in region_nodes:
-            G.nodes[v]["psi"] += (QUENCH_STRENGTH + 0.0j)
+            G_quench.nodes[v]["psi"] += (QUENCH_STRENGTH + 0.0j)
 
-        # relax with geometry frozen
+        # 4. Relax Stage 1 (Geometry Frozen)
+        # Note: We pass G_quench and adj_sets_quench
         for _ in range(QUENCH_RELAX_MOVES_STAGE1):
             rr = random.random()
             if rr < (P_PSI / (P_PSI + P_THETA)):
-                psi_update(G)
+                psi_update(G_quench)
             else:
-                theta_update(G, adj_sets=adj_sets)
+                theta_update(G_quench, adj_sets=adj_sets_quench)
 
         MU0 = MU_DEG2
-        dLE0 = DELTA_LAMBDA_E
         if QUENCH_TWO_STAGE:
             MU_DEG2 = MU_QUENCH
             if DELTA_LAMBDA_E_QUENCH is not None:
                 DELTA_LAMBDA_E = DELTA_LAMBDA_E_QUENCH
 
+        # 5. Relax Stage 2 (Geometry Active)
         for _ in range(QUENCH_RELAX_MOVES_STAGE2):
             rr = random.random()
             if QUENCH_ALLOW_REWIRE and rr < QUENCH_P_REWIRE:
-                rewire_move(G, MU_DEG2, adj_sets, rng)
+                # Use the copy's adjacency sets!
+                rewire_move(G_quench, MU_DEG2, adj_sets_quench, rng)
             else:
                 if rr < (P_PSI / (P_PSI + P_THETA)):
-                    psi_update(G)
+                    psi_update(G_quench)
                 else:
-                    theta_update(G, adj_sets=adj_sets)
+                    theta_update(G_quench, adj_sets=adj_sets_quench)
 
+        # Restore globals (though they didn't affect G, they affect the config)
         MU_DEG2 = MU0
-        DELTA_LAMBDA_E = dLE0
 
-        curv_after, sc3 = curvature_profile_vs_distance(G, quench_src, MAX_DIST_QUENCH)
-        rho_after, sc4 = density_profile_vs_distance(G, quench_src, MAX_DIST_QUENCH)
+        # 6. Measure Response on the Copy
+        curv_after, sc3 = curvature_profile_vs_distance(G_quench, quench_src, MAX_DIST_QUENCH)
+        rho_after, sc4 = density_profile_vs_distance(G_quench, quench_src, MAX_DIST_QUENCH)
+
+        # Combine counts
         shell_counts_quench = np.minimum.reduce([shell_counts_quench, sc3, sc4])
 
         delta_curv_prof = curv_after - curv_before
@@ -974,7 +1038,10 @@ def run(show_plot=True):
         mask = np.isfinite(delta_rho_prof) & np.isfinite(delta_curv_prof) & (shell_counts_quench >= MIN_SHELL_QUENCH)
         if np.sum(mask) >= 3:
             r_resp = pearson_r(delta_rho_prof[mask], delta_curv_prof[mask])
+
         print(f"   quench r(Δρ,Δcurv) ≈ {r_resp:.3f}")
+
+        # G_quench is discarded here; the main G remains pristine for the Light Cone test.
 
     # Light cone
     print(">> Light cone (geometry frozen)...")
@@ -1009,34 +1076,45 @@ def run(show_plot=True):
 
     md_final = float(np.mean([G.degree(i) for i in G.nodes()]))
     print(">> Summary:")
-    print(f"   <k>={md_final:.2f} target={DEG_TARGET:.2f} | λE_total={lambda_e_total():+.3f} (base={LAMBDA_E_BASE:+.3f}, Δ={DELTA_LAMBDA_E:+.3f})")
+    print(f"   <k>={md_final:.2f} | λE_total={lambda_e_total():+.3f} ")
     print(f"   backreaction r(ρ,curv) ≈ {r_rho_curv:.3f}")
     print(f"   xi ≈ {xi_est:.3f} hops")
     print(f"   triangles = {tri_count_final}")
 
-    if not show_plot:
-        return G
 
     # -------- plots --------
     fig, axs = plt.subplots(2, 3, figsize=(18, 10))
     plt.subplots_adjust(hspace=0.28, wspace=0.22)
 
-    axs[0, 0].plot(eq_log["moves"], eq_log["mean_deg"], label="Mean degree")
-    axs[0, 0].plot(eq_log["moves"], eq_log["tri_flux"], label="Mean Re(triangle loop)")
-    axs[0, 0].plot(eq_log["moves"], eq_log["corr_d1"], label="Mean d=1 corr (Re, norm)")
-    axs[0, 0].plot(eq_log["moves"], eq_log["acc_rewire"], label="Acc(rewire)")
-    axs[0, 0].plot(eq_log["moves"], eq_log["lambda_e_total"], label="λE_total")
-    axs[0, 0].plot(eq_log["moves"], eq_log["delta_lambda_e"], label="ΔλE (PI)")
-    axs[0, 0].set_title("Equilibration diagnostics")
-    axs[0, 0].set_xlabel("Moves")
-    axs[0, 0].grid(True, alpha=0.3)
-    axs[0, 0].legend()
+    # 1. Equilibration (Dual Axis)
+    # Primary Y-axis: Degree, Flux, Correlation, Acceptance
+    ln1 = axs[0, 0].plot(eq_log["moves"], eq_log["mean_deg"], label="Mean degree", color="tab:blue")
+    ln2 = axs[0, 0].plot(eq_log["moves"], eq_log["tri_flux"], label="Mean Re(loop)", color="tab:orange")
+    ln3 = axs[0, 0].plot(eq_log["moves"], eq_log["corr_d1"], label="d=1 corr", color="tab:green")
+    ln4 = axs[0, 0].plot(eq_log["moves"], eq_log["acc_rewire"], label="Acc(rewire)", color="tab:red", linestyle="--")
 
+    axs[0, 0].set_xlabel("Moves")
+    axs[0, 0].set_ylabel("Degree / Flux / Prob")
+    axs[0, 0].set_title("Equilibration: Topology vs Triangles")
+    axs[0, 0].grid(True, alpha=0.3)
+
+    # Secondary Y-axis (Right): Triangle Count
+    ax_tri = axs[0, 0].twinx()
+    ln5 = ax_tri.plot(eq_log["moves"], eq_log["triangles"], label="Total Triangles", color="tab:purple", linewidth=2, alpha=0.5)
+    ax_tri.set_ylabel("Triangle Count")
+
+    # Combined Legend
+    lns = ln1 + ln2 + ln3 + ln4 + ln5
+    labs = [l.get_label() for l in lns]
+    axs[0, 0].legend(lns, labs, loc="center right")
+
+    # 2. Correlator
     axs[0, 1].plot(ds, corr, marker="o")
     axs[0, 1].set_title("Gauge-invariant correlator vs hop distance")
     axs[0, 1].set_xlabel("Hop distance d")
     axs[0, 1].grid(True, alpha=0.3)
 
+    # 3. Quench Response
     axs[0, 2].set_title("Quench response: Δρ(d) and Δcurv(d)")
     axs[0, 2].set_xlabel("Hop distance d")
     axs[0, 2].grid(True, alpha=0.3)
@@ -1046,6 +1124,7 @@ def run(show_plot=True):
         axs[0, 2].plot(dgrid_qc, delta_curv_prof, marker="o", label="Δcurv(d)")
         axs[0, 2].legend()
 
+    # 4. Light Cone
     im = axs[1, 0].imshow(
         cone_matrix,
         aspect="auto",
@@ -1057,12 +1136,14 @@ def run(show_plot=True):
     axs[1, 0].set_ylabel("Moves (time)")
     plt.colorbar(im, ax=axs[1, 0], label="Mean Δ|psi|")
 
+    # 5. Curvature vs Density
     axs[1, 1].scatter(rho, curv, s=18, alpha=0.7)
     axs[1, 1].set_title("Curvature–density diagnostic")
     axs[1, 1].set_xlabel("ρ = |psi|^2")
     axs[1, 1].set_ylabel("Node curvature proxy")
     axs[1, 1].grid(True, alpha=0.3)
 
+    # 6. Text Stats
     axs[1, 2].axis("off")
     axs[1, 2].text(
         0.02, 0.95,
@@ -1072,18 +1153,20 @@ def run(show_plot=True):
         f"- Backreaction: r(ρ,curv)≈{r_rho_curv:.2f}\n"
         f"- Quench: r(Δρ,Δcurv)≈{r_resp:.2f}\n"
         f"- xi≈{xi_est:.2f} | triangles={tri_count_final}\n"
-        f"- <k>≈{md_final:.2f} | λE_total={lambda_e_total():+.3f}\n"
+        f"- <k>≈{md_final:.2f} | λE_base={LAMBDA_E_BASE:+.3g}\n"
         f"- Pauli: λP={LAMBDA_PAULI}, ρ0={RHO0}\n",
         va="top",
         fontsize=10,
     )
 
     fig.suptitle(
-        f"Relational Physics v3.3.5 | N={N} | κ={KAPPA}, β={BETA}, T={TEMP}, μ={MU_DEG2:.3g}, λG={LAMBDA_G}\n"
-        f"λE_base={LAMBDA_E_BASE:+.3g} + Δ={DELTA_LAMBDA_E:+.3g} | Pauli λP={LAMBDA_PAULI}, ρ0={RHO0}",
+        f"Relational Physics | N={N} | κ={KAPPA}, β={BETA}, T={TEMP}, μ={MU_DEG2:.3g}, λG={LAMBDA_G}\n"
+        f"λE_base={LAMBDA_E_BASE:+.3g} | Pauli λP={LAMBDA_PAULI}, ρ0={RHO0}",
         fontsize=12,
     )
-    #plt.show()
+    plt.tight_layout()
+    plt.savefig(FRAMES_DIR+"/N="+str(N)+"_S="+str(EQUIL_MOVES) + "_a.png", dpi=300, bbox_inches="tight")
+    plt.close()
 
     return G
 
@@ -1091,8 +1174,7 @@ def run(show_plot=True):
 # -----------------------
 # Emergent Geometry (Spring + MDS)
 # -----------------------
-def plot_emergent_geometry(G: nx.Graph):
-    print(">>> Calculating Emergent Geometry...")
+def plot_emergent_geometry(G: nx.Graph, step):
     pos_spring = nx.spring_layout(G, k=0.15, iterations=50)
 
     dist_matrix = nx.floyd_warshall_numpy(G)
@@ -1102,7 +1184,14 @@ def plot_emergent_geometry(G: nx.Graph):
     else:
         dist_matrix[:] = 1.0
 
-    mds = MDS(n_components=2, dissimilarity="precomputed", random_state=SEED)
+    # Updated MDS call to silence warnings
+    mds = MDS(
+        n_components=2,
+        dissimilarity="precomputed",
+        random_state=SEED,
+        n_init=4,              # Fixes "n_init" warning
+        normalized_stress="auto" # Fixes potential stress warning in newer versions
+    )
     pos_mds = mds.fit_transform(dist_matrix)
 
     fig, axs = plt.subplots(1, 2, figsize=(16, 8))
@@ -1127,14 +1216,21 @@ def plot_emergent_geometry(G: nx.Graph):
     axs[1].set_title("MDS Projection: The Emergent Manifold")
     axs[1].axis("off")
 
-    plt.show()
+    plt.tight_layout()
+    plt.savefig(FRAMES_DIR + "/N="+str(N)+"_S="+str(step) + "_m.png", dpi=300, bbox_inches="tight")
+    plt.close()
 
 
 if __name__ == "__main__":
-    print(">>> STARTING TOPOLOGICAL BIG BANG (v3.3.5)...")
-    G = run(show_plot=True)
-    plot_emergent_geometry(G)
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    FRAMES_DIR = f"runs/{timestamp}_N{N}_Seed{SEED}"
+    os.makedirs(FRAMES_DIR, exist_ok=True)
+    print(f">> Output directory created: {FRAMES_DIR}")
+
+    G = run()
+    plot_emergent_geometry(G, EQUIL_MOVES)
     plot_general_relativity_check(G)
+    analyze_dimensionality(G)
 
 
 
