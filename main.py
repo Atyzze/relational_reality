@@ -1,5 +1,5 @@
 import ot  # Requires: pip install POT
-import os, math, random, time, datetime, threading, warnings
+import os, math, random, time, datetime, shutil, threading, warnings
 import scipy.sparse
 import numpy as np
 import networkx as nx
@@ -9,44 +9,43 @@ from sklearn.manifold import MDS
 from collections import defaultdict, deque
 
 # CONFIG
+
 SEED = 1
 random.seed(SEED)
 np.random.seed(SEED)
+
 N = 1000
-
-EQUIL_MOVES = 4_000_000
-PROP_MOVES  = 12_000
+STEP_COUNT  = 1_000_000
 LOG_EVERY   = 10_000
-
-LAMBDA_E_BASE = -1.0     # "cosmological expansion" (reward edges)
+VISUALIZE_STEPS = True
 
 # Move mix
 P_PSI    = 0.55
 P_THETA  = 0.35
 P_REWIRE = 0.10  # you can raise (0.15–0.25) once stable
 
-# Action parameters
-KAPPA      = 0.6
-BETA       = 0.9
-MASS2      = 0.35
-LAMBDA_PSI = 0.08
-LAMBDA_G   = -1.35
-
-# Pauli exclusion (anti-crunch)
-LAMBDA_PAULI = 0.05   # strength of exp(rho/rho0)
-RHO0         = 4.0     # density scale for the exponential
-
 # Temperature + steps
-TEMP       = 0.2
+TEMP       = 0.3
 PSI_STEP   = 0.25
 THETA_STEP = 0.35
 
-# Geometry / degree costs
-MU_DEG2 = 2.5  # start a touch higher than 1.35 to fight runaway degree
+# Action parameters, Geometry / degree costs
+LAMBDA_E_BASE = -1.0    #cosmological expansion (reward edges)
+LAMBDA_G      = -0.80   #strength of gravity
+LAMBDA_PSI    = 0.08
+KAPPA         = 0.6
+BETA          = 0.9
+MASS2         = 0.35
+
+LAMBDA_PAULI  = 0.05   #strength of exp(rho/rho0)
+RHO0          = 4.0    #density scale for the exponential
+MU_DEG2       = 1.6    #lower = more triangles
 
 # Rewire proposal mix
 USE_TRIADIC_TOGGLE = True
 P_TRIADIC_TOGGLE   = 0.65  # remainder uses balanced MH global kernel
+
+#parameters below are solely diagnostics
 
 # Correlator
 MAX_DIST_CORR = 20
@@ -56,6 +55,7 @@ CORR_MIN_SHELL = 5
 AVG_K_SHORTEST_PATHS = 1
 
 # Light cone
+PROPAGATE_MOVES  = 10_000
 PERTURB_EPS      = 1.5
 MAX_DIST_LIGHTCONE = 10
 FRONT_Q            = 0.80
@@ -174,7 +174,7 @@ def analyze_dimensionality(G, plot=True):
         ax[1].set_ylabel("log(return prob)")
 
         plt.tight_layout()
-        plt.savefig(FRAMES_DIR+"/N="+str(N)+"_S="+str(EQUIL_MOVES) + "_d.png", dpi=300, bbox_inches="tight")
+        plt.savefig(FRAMES_DIR+"/N="+str(N)+"_S="+str(STEP_COUNT) + "_d.png", dpi=300, bbox_inches="tight")
         plt.close()
 
     return d_H, d_S
@@ -278,7 +278,7 @@ def plot_general_relativity_check(G):
     plt.grid(True, alpha=0.3)
     plt.legend()
     plt.tight_layout()
-    plt.savefig(FRAMES_DIR+"/N="+str(N)+"_S="+str(EQUIL_MOVES) + "_g.png", dpi=300, bbox_inches="tight")
+    plt.savefig(FRAMES_DIR+"/N="+str(N)+"_S="+str(STEP_COUNT) + "_g.png", dpi=300, bbox_inches="tight")
     plt.close()
 
     print("-" * 40)
@@ -838,7 +838,7 @@ def run():
 
     start_time = time.time()
 
-    for t in range(1, EQUIL_MOVES + 1):
+    for t in range(1, STEP_COUNT + 1):
         r = random.random()
         if r < P_PSI:
             psi_update(G)
@@ -851,7 +851,7 @@ def run():
 
 
 
-        if t % LOG_EVERY == 0 or t == EQUIL_MOVES:
+        if t % LOG_EVERY == 0 or t == STEP_COUNT:
             md = float(np.mean([G.degree(i) for i in nodes]))
 
             if (t % (10 * LOG_EVERY) == 0) or (t == LOG_EVERY) or (len(tri_samples) < 200):
@@ -882,7 +882,7 @@ def run():
             ar = acc_rew / max(1, tot_rew)
             elapsed = time.time() - start_time
             sps = t / max(1e-9, elapsed)  # steps per second
-            eta = (EQUIL_MOVES - t) / sps # estimated seconds remaining
+            eta = (STEP_COUNT - t) / sps # estimated seconds remaining
 
             eq_log["moves"].append(t)
             eq_log["mean_deg"].append(md)
@@ -892,12 +892,13 @@ def run():
             eq_log["triangles"].append(tri_count)
             eq_log["lambda_e_total"].append(lambda_e_total())
 
-            print(f"{t/1e6:.3f}M/{EQUIL_MOVES/1e6:.1f}M | <k>={md:.2f} | tri#={tri_count:6d} | Re(loop)={tri_flux:.4f} "
-                  f"| d=1 corr={corr1:.4f}  acc(rew)={ar:.4f} | {sps:.0f} it/s | ETA {eta:.0f}s" )
+            print(f"{t/1e6:.3f}/{STEP_COUNT/1e6:.1f}M | <k>={md:.3f} | tri#={tri_count:6d} | Re(loop)={tri_flux:.3f} "
+                  f"| d=1 corr={corr1:.3f}  acc(rew)={ar:.3f} | {sps:.0f} it/s | ETA {eta:.0f}s" )
 
 
             acc_rew = tot_rew = 0
-            #plot_emergent_geometry(G, t)
+            if VISUALIZE_STEPS:
+                plot_emergent_geometry(G, t)
 
 
 
@@ -1044,6 +1045,7 @@ def run():
         # G_quench is discarded here; the main G remains pristine for the Light Cone test.
 
     # Light cone
+
     print(">> Light cone (geometry frozen)...")
     src = random.choice(list(comp))
     dist_map = bfs_distances(G, src, MAX_DIST_LIGHTCONE)
@@ -1051,13 +1053,19 @@ def run():
     G.nodes[src]["psi"] += (PERTURB_EPS + 0.0j)
 
     cone_times, cone_matrix = [], []
-    for t in range(1, PROP_MOVES + 1):
+
+    # NEW: Define a specific logging interval for the light cone
+    LC_LOG_STEP = 100
+
+    for t in range(1, PROPAGATE_MOVES + 1):
         rr = random.random()
         if rr < (P_PSI / (P_PSI + P_THETA)):
             psi_update(G)
         else:
             theta_update(G, adj_sets=adj_sets)
-        if t % LOG_EVERY == 0 or t == PROP_MOVES:
+
+        # CHANGED: Use LC_LOG_STEP instead of global LOG_EVERY
+        if t % LC_LOG_STEP == 0:
             cone_times.append(t)
             cone_matrix.append(lightcone_measurement(dist_map, baseline_abspsi, G, MAX_DIST_LIGHTCONE))
 
@@ -1165,7 +1173,7 @@ def run():
         fontsize=12,
     )
     plt.tight_layout()
-    plt.savefig(FRAMES_DIR+"/N="+str(N)+"_S="+str(EQUIL_MOVES) + "_a.png", dpi=300, bbox_inches="tight")
+    plt.savefig(FRAMES_DIR+"/N="+str(N)+"_S="+str(STEP_COUNT) + "_a.png", dpi=300, bbox_inches="tight")
     plt.close()
 
     return G
@@ -1175,27 +1183,44 @@ def run():
 # Emergent Geometry (Spring + MDS)
 # -----------------------
 def plot_emergent_geometry(G: nx.Graph, step):
+    # --- 1. Spring Layout (Always works) ---
+    # If graph is empty, spring_layout just places nodes in a circle or random spots
     pos_spring = nx.spring_layout(G, k=0.15, iterations=50)
 
-    dist_matrix = nx.floyd_warshall_numpy(G)
-    finite = np.isfinite(dist_matrix)
-    if np.any(finite):
-        dist_matrix[~finite] = dist_matrix[finite].max() * 2
+    # --- 2. MDS Projection (The tricky part) ---
+    if G.number_of_edges() == 0:
+        # If no edges, don't run MDS. Just put everyone at (0,0)
+        # This restores the "single dot" you saw before without errors.
+        pos_mds = np.zeros((len(G.nodes()), 2))
     else:
-        dist_matrix[:] = 1.0
+        # Normal MDS logic
+        dist_matrix = nx.floyd_warshall_numpy(G)
+        finite = np.isfinite(dist_matrix)
 
-    # Updated MDS call to silence warnings
-    mds = MDS(
-        n_components=2,
-        dissimilarity="precomputed",
-        random_state=SEED,
-        n_init=4,              # Fixes "n_init" warning
-        normalized_stress="auto" # Fixes potential stress warning in newer versions
-    )
-    pos_mds = mds.fit_transform(dist_matrix)
+        # Handle disconnected components safely
+        if np.any(finite):
+            flat_finite = dist_matrix[finite]
+            # Avoid zero-max error if only self-loops exist
+            max_d = flat_finite.max() if flat_finite.max() > 0 else 1.0
+            dist_matrix[~finite] = max_d * 2.0
+        else:
+            dist_matrix[:] = 1.0
+
+        # Run MDS, but silence the "divide by zero" warning if it happens
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=RuntimeWarning)
+            mds = MDS(
+                n_components=2,
+                dissimilarity="precomputed",
+                random_state=SEED,
+                n_init=4,
+                normalized_stress="auto"
+            )
+            pos_mds = mds.fit_transform(dist_matrix)
 
     fig, axs = plt.subplots(1, 2, figsize=(16, 8))
 
+    # Left: Topology
     nx.draw_networkx_edges(G, pos_spring, ax=axs[0], alpha=0.03, edge_color="gray")
     nx.draw_networkx_nodes(
         G, pos_spring, ax=axs[0],
@@ -1206,6 +1231,7 @@ def plot_emergent_geometry(G: nx.Graph, step):
     axs[0].set_title("Physical Topology: Spring-Mass Embedding")
     axs[0].axis("off")
 
+    # Right: Emergent Geometry
     sc = axs[1].scatter(
         pos_mds[:, 0], pos_mds[:, 1],
         s=10, alpha=0.6,
@@ -1220,19 +1246,16 @@ def plot_emergent_geometry(G: nx.Graph, step):
     plt.savefig(FRAMES_DIR + "/N="+str(N)+"_S="+str(step) + "_m.png", dpi=300, bbox_inches="tight")
     plt.close()
 
-
 if __name__ == "__main__":
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    FRAMES_DIR = f"runs/{timestamp}_N{N}_Seed{SEED}"
+    FRAMES_DIR = f"runs/{timestamp}_N{N}_S{STEP_COUNT}_s{SEED}"
     os.makedirs(FRAMES_DIR, exist_ok=True)
+    shutil.copy2(__file__, FRAMES_DIR)
     print(f">> Output directory created: {FRAMES_DIR}")
 
     G = run()
-    plot_emergent_geometry(G, EQUIL_MOVES)
+    plot_emergent_geometry(G, STEP_COUNT)
     plot_general_relativity_check(G)
     analyze_dimensionality(G)
 
-
-
-
-
+    print(f">> Finished, find all data in folder: {FRAMES_DIR}")
