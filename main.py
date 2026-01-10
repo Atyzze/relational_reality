@@ -17,35 +17,37 @@ np.random.seed(SEED)
 N = 1000
 STEP_COUNT  = 1_000_000
 LOG_EVERY   = 10_000
-VISUALIZE_STEPS = True
+VISUALIZE_STEPS = False
+VISUALIZE_ALL_NODES = False
+
 
 # Move mix
 P_PSI    = 0.55
 P_THETA  = 0.35
-P_REWIRE = 0.10  # you can raise (0.15–0.25) once stable
+P_REWIRE = 0.10
 
 # Temperature + steps
-TEMP       = 0.3
+TEMP       = 0.20
 PSI_STEP   = 0.25
 THETA_STEP = 0.35
 
-# Action parameters, Geometry / degree costs
-LAMBDA_E_BASE = -1.0    #cosmological expansion (reward edges)
-LAMBDA_G      = -0.80   #strength of gravity
+# Action parameters / geometry / degree costs
+LAMBDA_E_BASE = -2.50
+LAMBDA_G      = 0.60
 LAMBDA_PSI    = 0.08
-KAPPA         = 0.6
-BETA          = 0.9
+KAPPA         = 0.90
+BETA          = 0.90
 MASS2         = 0.35
 
 LAMBDA_PAULI  = 0.05   #strength of exp(rho/rho0)
 RHO0          = 4.0    #density scale for the exponential
-MU_DEG2       = 1.6    #lower = more triangles
+MU_DEG2       = 0.1   #lower = more triangles
 
 # Rewire proposal mix
 USE_TRIADIC_TOGGLE = True
 P_TRIADIC_TOGGLE   = 0.65  # remainder uses balanced MH global kernel
 
-#parameters below are solely diagnostics
+#parameters below are solely for diagnostics and dont affect the actual graph evolution
 
 # Correlator
 MAX_DIST_CORR = 20
@@ -84,16 +86,12 @@ XI_MIN_COUNT = 140
 
 def analyze_dimensionality(G, plot=True):
     N = G.number_of_nodes()
-
-    # --- 1. Hausdorff Dimension (Volume Growth) ---
-    # Pick a few random centers to average out local lumpiness
     centers = np.random.choice(list(G.nodes()), size=min(10, N), replace=False)
 
     rs_all = []
     counts_all = []
 
     for source in centers:
-        # You already have bfs_distances logic in your code
         dists = dict(nx.single_source_shortest_path_length(G, source))
         max_d = max(dists.values())
 
@@ -126,8 +124,6 @@ def analyze_dimensionality(G, plot=True):
     # L = D - A
     L = nx.laplacian_matrix(G).astype(float)
 
-    # Exact eigenvalues (fast enough for N=1000)
-    # Note: eigenvalues of Laplacian are 0 = lam_1 <= lam_2 ... <= lam_N
     evals = scipy.linalg.eigh(L.todense(), eigvals_only=True)
 
     # Heat Kernel Trace: P(t) = (1/N) * sum(exp(-lambda * t))
@@ -1045,13 +1041,12 @@ def run():
         # G_quench is discarded here; the main G remains pristine for the Light Cone test.
 
     # Light cone
-
     print(">> Light cone (geometry frozen)...")
     src = random.choice(list(comp))
     dist_map = bfs_distances(G, src, MAX_DIST_LIGHTCONE)
     baseline_abspsi = {i: abs(G.nodes[i]["psi"]) for i in G.nodes()}
-    G.nodes[src]["psi"] += (PERTURB_EPS + 0.0j)
-
+    #G.nodes[src]["psi"] += (PERTURB_EPS + 0.0j)
+    G.nodes[src]["psi"] *= (1.0 + PERTURB_EPS)
     cone_times, cone_matrix = [], []
 
     # NEW: Define a specific logging interval for the light cone
@@ -1185,16 +1180,26 @@ def run():
 def plot_emergent_geometry(G: nx.Graph, step):
     # --- 1. Spring Layout (Always works) ---
     # If graph is empty, spring_layout just places nodes in a circle or random spots
-    pos_spring = nx.spring_layout(G, k=0.15, iterations=50)
+
+
+    # Identify the largest connected cluster
+    largest_cc_nodes = max(nx.connected_components(G), key=len)
+    # Create a subgraph view (does not modify original G)
+    if VISUALIZE_ALL_NODES:
+        G_vis = G
+    else:
+        G_vis = G.subgraph(largest_cc_nodes).copy()
+
+    pos_spring = nx.spring_layout(G_vis, k=0.15, iterations=50)
 
     # --- 2. MDS Projection (The tricky part) ---
-    if G.number_of_edges() == 0:
+    if G_vis.number_of_edges() == 0:
         # If no edges, don't run MDS. Just put everyone at (0,0)
         # This restores the "single dot" you saw before without errors.
-        pos_mds = np.zeros((len(G.nodes()), 2))
+        pos_mds = np.zeros((len(G_vis.nodes()), 2))
     else:
         # Normal MDS logic
-        dist_matrix = nx.floyd_warshall_numpy(G)
+        dist_matrix = nx.floyd_warshall_numpy(G_vis)
         finite = np.isfinite(dist_matrix)
 
         # Handle disconnected components safely
@@ -1221,11 +1226,11 @@ def plot_emergent_geometry(G: nx.Graph, step):
     fig, axs = plt.subplots(1, 2, figsize=(16, 8))
 
     # Left: Topology
-    nx.draw_networkx_edges(G, pos_spring, ax=axs[0], alpha=0.03, edge_color="gray")
+    nx.draw_networkx_edges(G_vis, pos_spring, ax=axs[0], alpha=0.03, edge_color="gray")
     nx.draw_networkx_nodes(
-        G, pos_spring, ax=axs[0],
+        G_vis, pos_spring, ax=axs[0],
         node_size=5,
-        node_color=[d for _, d in G.degree()],
+        node_color=[d for _, d in G_vis.degree()],
         cmap="plasma"
     )
     axs[0].set_title("Physical Topology: Spring-Mass Embedding")
@@ -1235,7 +1240,7 @@ def plot_emergent_geometry(G: nx.Graph, step):
     sc = axs[1].scatter(
         pos_mds[:, 0], pos_mds[:, 1],
         s=10, alpha=0.6,
-        c=[rho_i(G, i) for i in G.nodes()],
+        c=[rho_i(G_vis, i) for i in G_vis.nodes()],
         cmap="viridis"
     )
     plt.colorbar(sc, ax=axs[1], label="Matter Density ρ=|psi|²")
@@ -1253,9 +1258,11 @@ if __name__ == "__main__":
     shutil.copy2(__file__, FRAMES_DIR)
     print(f">> Output directory created: {FRAMES_DIR}")
 
-    G = run()
-    plot_emergent_geometry(G, STEP_COUNT)
+    G = run() #main loop, this can take a long while depending on N and step count.
+    print(f">> Calculacting general relativity.. .")
     plot_general_relativity_check(G)
+    print(f">> Calculacting dimensionality.. .")
     analyze_dimensionality(G)
-
+    print(f">> Calculating geometry.. .")
+    plot_emergent_geometry(G, STEP_COUNT)
     print(f">> Finished, find all data in folder: {FRAMES_DIR}")
