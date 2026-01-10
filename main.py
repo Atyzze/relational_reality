@@ -39,13 +39,13 @@ KAPPA         = 0.90
 BETA          = 0.90
 MASS2         = 0.35
 
-LAMBDA_PAULI  = 0.05   #strength of exp(rho/rho0)
-RHO0          = 4.0    #density scale for the exponential
-MU_DEG2       = 0.1   #lower = more triangles
+LAMBDA_PAULI  = 0.05   
+RHO0          = 4.0    
+MU_DEG2       = 0.1  
 
 # Rewire proposal mix
 USE_TRIADIC_TOGGLE = True
-P_TRIADIC_TOGGLE   = 0.65  # remainder uses balanced MH global kernel
+P_TRIADIC_TOGGLE   = 0.65 
 
 #parameters below are solely for diagnostics and dont affect the actual graph evolution
 
@@ -101,8 +101,6 @@ def analyze_dimensionality(G, plot=True):
             counts[d] += 1
         cumulative = np.cumsum(counts)
 
-        # Filter strictly for the "middle" range to avoid boundary effects
-        # Usually r=2 to r=diameter/2 is safe for N=1000
         valid_r = np.arange(1, len(cumulative))
         rs_all.extend(valid_r)
         counts_all.extend(cumulative[1:])
@@ -111,8 +109,6 @@ def analyze_dimensionality(G, plot=True):
     log_r = np.log(rs_all)
     log_n = np.log(counts_all)
 
-    # Fit only the middle section (e.g., radius 2 to 6 for N=1000)
-    # This avoids the "discretization noise" at r=1 and "finite size" at r=max
     mask = (log_r > np.log(1.5)) & (log_r < np.log(8))
 
     d_H = np.nan
@@ -192,14 +188,11 @@ def compute_ollivier_ricci_flow(G):
     nodes = list(G.nodes())
 
     # 1. Precompute all-pairs shortest paths (needed for Earth Mover's Distance)
-    # For N=1000 this is fast. For N=4000 it takes a moment.
     path_lengths = dict(nx.all_pairs_shortest_path_length(G))
 
     for u, v in G.edges():
         # Define the "Mass Distributions" (Ink Drops) at u and v
         # We assume uniform distribution over neighbors (Standard Ricci)
-        # Advanced: You could weight this by |psi|^2 if you wanted.
-
         nbrs_u = [u] + list(G.neighbors(u))
         nbrs_v = [v] + list(G.neighbors(v))
         mu_u = np.ones(len(nbrs_u)) / len(nbrs_u)
@@ -216,7 +209,6 @@ def compute_ollivier_ricci_flow(G):
                     M[i, j] = 999 # Should not happen in connected graph
 
         # Calculate Earth Mover's Distance (Wasserstein)
-        # "How much work to move the ink drop from U's neighbors to V's neighbors?"
         emd = ot.emd2(mu_u, mu_v, M)
 
         # Geometric Distance (Hop distance is always 1 for an edge)
@@ -1173,18 +1165,10 @@ def run():
 
     return G
 
-
-# -----------------------
 # Emergent Geometry (Spring + MDS)
 # -----------------------
 def plot_emergent_geometry(G: nx.Graph, step):
-    # --- 1. Spring Layout (Always works) ---
-    # If graph is empty, spring_layout just places nodes in a circle or random spots
-
-
-    # Identify the largest connected cluster
     largest_cc_nodes = max(nx.connected_components(G), key=len)
-    # Create a subgraph view (does not modify original G)
     if VISUALIZE_ALL_NODES:
         G_vis = G
     else:
@@ -1192,17 +1176,12 @@ def plot_emergent_geometry(G: nx.Graph, step):
 
     pos_spring = nx.spring_layout(G_vis, k=0.15, iterations=50)
 
-    # --- 2. MDS Projection (The tricky part) ---
     if G_vis.number_of_edges() == 0:
-        # If no edges, don't run MDS. Just put everyone at (0,0)
-        # This restores the "single dot" you saw before without errors.
         pos_mds = np.zeros((len(G_vis.nodes()), 2))
     else:
-        # Normal MDS logic
         dist_matrix = nx.floyd_warshall_numpy(G_vis)
         finite = np.isfinite(dist_matrix)
 
-        # Handle disconnected components safely
         if np.any(finite):
             flat_finite = dist_matrix[finite]
             # Avoid zero-max error if only self-loops exist
@@ -1211,7 +1190,6 @@ def plot_emergent_geometry(G: nx.Graph, step):
         else:
             dist_matrix[:] = 1.0
 
-        # Run MDS, but silence the "divide by zero" warning if it happens
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", category=RuntimeWarning)
             mds = MDS(
