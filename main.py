@@ -1,5 +1,5 @@
 import ot  # Requires: pip install POT
-import os, math, random, time, datetime, shutil, threading, warnings
+import os, argparse, math, random, time, datetime, shutil, threading, warnings
 import scipy.sparse
 import numpy as np
 import networkx as nx
@@ -7,19 +7,18 @@ import matplotlib.pyplot as plt
 warnings.filterwarnings("ignore", category=FutureWarning, module="sklearn")
 from sklearn.manifold import MDS
 from collections import defaultdict, deque
+from datetime import timedelta
 
 # CONFIG
-
-SEED = 1
+SEED = 1                   #seeds allow for reproducable results while also letting you infinitely long spin the RNG wheel
 random.seed(SEED)
 np.random.seed(SEED)
 
-N = 1000
-STEP_COUNT  = 1_000_000
-LOG_EVERY   = 10_000
-VISUALIZE_STEPS = False
-VISUALIZE_ALL_NODES = False
-
+N =1600                    #lower this to 100 on your first run, to check how long it takes to crunch the numbers and to make sure the entire pipeline doesn't error, you might have to install some additional python libraries, see first line of code'
+STEP_COUNT  = 1_000_000    #how many compute cycles you want to iterate your universe into its future
+LOG_EVERY   = 10_000       #how often you want your universe to report back to you, taking a peek in its inner procesSs
+VISUALIZE_STEPS = False    #if set to true, every LOG_EVERY step count will also draw spring & mds layout (this is extremely compute heavy!, MDS projection scales o(n3)) and will take potentially decades depending the exact parameters above, if you log every single step ...)
+VISUALIZE_ALL_NODES = True #if set to false, disconnected nodes when drawing the spring/mds layout will not be drawn, thus effectively remaining zoomed in on the currently biggest manifold in your evolving universe
 
 # Move mix
 P_PSI    = 0.55
@@ -32,22 +31,23 @@ PSI_STEP   = 0.25
 THETA_STEP = 0.35
 
 # Action parameters / geometry / degree costs
-LAMBDA_E_BASE = -2.50
+LAMBDA_E_BASE = -0.50
 LAMBDA_G      = 0.60
 LAMBDA_PSI    = 0.08
 KAPPA         = 0.90
-BETA          = 0.90
+BETA          = 3.5 #This is the "inverse temperature" for the triangle term. Raising it makes the system hate non-closed loops more. was 0.9
 MASS2         = 0.35
 
-LAMBDA_PAULI  = 0.05   
-RHO0          = 4.0    
-MU_DEG2       = 0.1  
+LAMBDA_PAULI  = 0.05
+RHO0          = 4.0
+MU_DEG2       = 0.01
 
 # Rewire proposal mix
 USE_TRIADIC_TOGGLE = True
-P_TRIADIC_TOGGLE   = 0.65 
+P_TRIADIC_TOGGLE   = 0.85
 
 #parameters below are solely for diagnostics and dont affect the actual graph evolution
+START_TEMP = TEMP
 
 # Correlator
 MAX_DIST_CORR = 20
@@ -73,10 +73,8 @@ MAX_DIST_QUENCH = 10
 QUENCH_TWO_STAGE = True
 QUENCH_ALLOW_REWIRE = True
 QUENCH_P_REWIRE = 0.15
-QUENCH_RELAX_MOVES_STAGE1 = 4000
-QUENCH_RELAX_MOVES_STAGE2 = 20000
-MU_QUENCH = 0.20
-DELTA_LAMBDA_E_QUENCH = None
+QUENCH_RELAX_MOVES_STAGE1 = 500
+QUENCH_RELAX_MOVES_STAGE2 = 1000
 MIN_SHELL_QUENCH = 8
 
 # Fit
@@ -165,13 +163,95 @@ def analyze_dimensionality(G, plot=True):
         ax[1].set_xlabel("log(diffusion time)")
         ax[1].set_ylabel("log(return prob)")
 
+        print(f"Hausdorff:{d_H:.2f}")
+        print(f"Spectral: {d_S:.2f}")
+
         plt.tight_layout()
         plt.savefig(FRAMES_DIR+"/N="+str(N)+"_S="+str(STEP_COUNT) + "_d.png", dpi=300, bbox_inches="tight")
         plt.close()
 
     return d_H, d_S
 
-def compute_ollivier_ricci_flow(G):
+def compute_ollivier_ricci_flow(G, alpha=0.5):
+    """
+    Computes the 'Ollivier-Ricci Curvature' for every edge using a fixed
+    laziness parameter (alpha) to remove degree bias.
+
+    Standard Ollivier-Ricci uses alpha=0.5:
+    - 50% mass stays at the node 'u'
+    - 50% mass is distributed equally among neighbors of 'u'
+
+    Kappa = 1 - (Wasserstein_Distance / Edge_Length)
+    """
+    print(f">> Calculating Einstein Geometry (Standard Ollivier-Ricci, alpha={alpha})...")
+
+    curvature_map = {}
+
+    # 1. Precompute all-pairs shortest paths (needed for Earth Mover's Distance)
+    # Optimization: For larger graphs, consider computing this only for local neighborhoods
+    try:
+        path_lengths = dict(nx.all_pairs_shortest_path_length(G))
+    except Exception as e:
+        print(f"Warning: Graph connectivity issue in Ricci calculation: {e}")
+        return {}
+
+    for u, v in G.edges():
+        # Get neighbors (including self)
+        # Note: G.neighbors(u) returns an iterator, so we listify it.
+        # We handle 'u' (self) explicitly to assign the alpha mass.
+
+        real_nbrs_u = list(G.neighbors(u))
+        real_nbrs_v = list(G.neighbors(v))
+
+        # Helper to build mass distribution
+        def get_distribution(node, neighbors, alpha_val):
+            degree = len(neighbors)
+            # If isolated node (degree 0), all mass is on self
+            if degree == 0:
+                return [node], np.array([1.0])
+
+            # List of locations: [self, neighbor_1, neighbor_2, ...]
+            locations = [node] + neighbors
+
+            # Mass values
+            masses = np.zeros(len(locations))
+            masses[0] = alpha_val  # Mass on self
+            masses[1:] = (1.0 - alpha_val) / degree  # Mass on neighbors
+
+            return locations, masses
+
+        # Define distributions
+        locs_u, mu_u = get_distribution(u, real_nbrs_u, alpha)
+        locs_v, mu_v = get_distribution(v, real_nbrs_v, alpha)
+
+        # Create the Cost Matrix
+        # Rows = neighbors of u (including u), Cols = neighbors of v (including v)
+        M = np.zeros((len(locs_u), len(locs_v)))
+
+        for i, node_i in enumerate(locs_u):
+            for j, node_j in enumerate(locs_v):
+                # Distance lookup
+                # If nodes are disconnected, path_lengths might miss the entry.
+                # We use a large penalty (effectively infinity) for disconnected components.
+                if node_j in path_lengths[node_i]:
+                    M[i, j] = path_lengths[node_i][node_j]
+                else:
+                    M[i, j] = 9999.0
+
+        # Calculate Earth Mover's Distance (Wasserstein)
+        # emd2 returns the computed distance directly
+        emd = ot.emd2(mu_u, mu_v, M)
+
+        # Geometric Distance (Hop distance is always 1 for an edge)
+        d_uv = 1.0
+
+        # Ricci Curvature
+        kappa = 1.0 - (emd / d_uv)
+        curvature_map[(u, v)] = kappa
+
+    return curvature_map
+
+def compute_ollivier_ricci_flow_old(G):
     """
     Computes the 'Ollivier-Ricci Curvature' for every edge.
     This measures if the space is 'spherical' (positive curvature, gravity)
@@ -810,7 +890,7 @@ def rewire_move(G, mu_deg2, adj_sets, rng):
 # MAIN RUN
 # -----------------------
 def run():
-    global MU_DEG2, DELTA_LAMBDA_E
+    global MU_DEG2, DELTA_LAMBDA_E, TEMP
     G = init_graph()
     nodes = list(G.nodes())
     rng = np.random.default_rng(SEED + 123)
@@ -827,6 +907,9 @@ def run():
     start_time = time.time()
 
     for t in range(1, STEP_COUNT + 1):
+        TEMP = TEMP*0.999999
+        #progress = t / STEP_COUNT  # <--- DON'T FORGET THIS DIVISION
+        #TEMP = TEMP_START - (progress * (TEMP_START - TEMP_END))
         r = random.random()
         if r < P_PSI:
             psi_update(G)
@@ -880,8 +963,8 @@ def run():
             eq_log["triangles"].append(tri_count)
             eq_log["lambda_e_total"].append(lambda_e_total())
 
-            print(f"{t/1e6:.3f}/{STEP_COUNT/1e6:.1f}M | <k>={md:.3f} | tri#={tri_count:6d} | Re(loop)={tri_flux:.3f} "
-                  f"| d=1 corr={corr1:.3f}  acc(rew)={ar:.3f} | {sps:.0f} it/s | ETA {eta:.0f}s" )
+            print(f"{t/1e6:.3f}/{STEP_COUNT/1e6:.1f}M|T{TEMP:.3f}|k{md:.3f}|tri{tri_count:6d}|Re(loop){tri_flux:.3f}"
+                  f"|d=1 corr{corr1:.3f}  acc(rew){ar:.3f}|{sps:.0f}|{timedelta(seconds=int(eta))}" )
 
 
             acc_rew = tot_rew = 0
@@ -963,7 +1046,7 @@ def run():
     shell_counts_quench = None
 
     if DO_QUENCH and G.number_of_edges():
-        print(">> Quench response (Δρ vs Δcurv) [Running on Copy]...")
+        print(">> Quench response (Δρ vs Δcurv) ...")
 
         # 1. Create a Deep Copy of the Universe
         G_quench = G.copy()
@@ -993,12 +1076,6 @@ def run():
             else:
                 theta_update(G_quench, adj_sets=adj_sets_quench)
 
-        MU0 = MU_DEG2
-        if QUENCH_TWO_STAGE:
-            MU_DEG2 = MU_QUENCH
-            if DELTA_LAMBDA_E_QUENCH is not None:
-                DELTA_LAMBDA_E = DELTA_LAMBDA_E_QUENCH
-
         # 5. Relax Stage 2 (Geometry Active)
         for _ in range(QUENCH_RELAX_MOVES_STAGE2):
             rr = random.random()
@@ -1010,9 +1087,6 @@ def run():
                     psi_update(G_quench)
                 else:
                     theta_update(G_quench, adj_sets=adj_sets_quench)
-
-        # Restore globals (though they didn't affect G, they affect the config)
-        MU_DEG2 = MU0
 
         # 6. Measure Response on the Copy
         curv_after, sc3 = curvature_profile_vs_distance(G_quench, quench_src, MAX_DIST_QUENCH)
@@ -1149,16 +1223,19 @@ def run():
         f"- Quench: r(Δρ,Δcurv)≈{r_resp:.2f}\n"
         f"- xi≈{xi_est:.2f} | triangles={tri_count_final}\n"
         f"- <k>≈{md_final:.2f} | λE_base={LAMBDA_E_BASE:+.3g}\n"
-        f"- Pauli: λP={LAMBDA_PAULI}, ρ0={RHO0}\n",
+        f"- Pauli: λP={LAMBDA_PAULI}, ρ0={RHO0}\n"
+        f"- κ={KAPPA}\n"
+        f"- β={BETA}\n"
+        f"- T={START_TEMP}\n"
+        f"- κ={KAPPA}\n"
+        f"- μ={MU_DEG2:.3g}\n"
+        f"- λG={LAMBDA_G}\n",
+
         va="top",
         fontsize=10,
     )
 
-    fig.suptitle(
-        f"Relational Physics | N={N} | κ={KAPPA}, β={BETA}, T={TEMP}, μ={MU_DEG2:.3g}, λG={LAMBDA_G}\n"
-        f"λE_base={LAMBDA_E_BASE:+.3g} | Pauli λP={LAMBDA_PAULI}, ρ0={RHO0}",
-        fontsize=12,
-    )
+    fig.suptitle( f"Relational Physics | N={N} ", fontsize=12,)
     plt.tight_layout()
     plt.savefig(FRAMES_DIR+"/N="+str(N)+"_S="+str(STEP_COUNT) + "_a.png", dpi=300, bbox_inches="tight")
     plt.close()
@@ -1230,14 +1307,23 @@ def plot_emergent_geometry(G: nx.Graph, step):
     plt.close()
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Run Relational Reality sSimulation")
+    parser.add_argument("-N", "--nodes", type=int, default=N, help=f"Number of nodes (default: {N})")
+    parser.add_argument("-S", "--steps", type=int, default=STEP_COUNT, help=f"Number of steps (default: {STEP_COUNT})")
+    parser.add_argument("-s", "--seed", type=int, default=SEED, help="Seed number)")
+    args = parser.parse_args()
+    N = args.nodes
+    STEP_COUNT = args.steps
+    SEED = args.seed
+
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     FRAMES_DIR = f"runs/{timestamp}_N{N}_S{STEP_COUNT}_s{SEED}"
     os.makedirs(FRAMES_DIR, exist_ok=True)
     shutil.copy2(__file__, FRAMES_DIR)
     print(f">> Output directory created: {FRAMES_DIR}")
+    #am deliberately refusing to bother provide support for windows, the users but have to flip a single slash to make it all work with many digital tiny universsal pythons sSneks—~𓆙𓂀
 
-    G = run() #main loop, this can take a long while depending on N and step count.
-    print(f">> Calculacting general relativity.. .")
+    G = run()
     plot_general_relativity_check(G)
     print(f">> Calculacting dimensionality.. .")
     analyze_dimensionality(G)
