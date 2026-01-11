@@ -14,8 +14,18 @@ this is a work in progresssSs—~𓆙𓂀
 
 am mainly looking for collaboration at this point, and thus, I present my findings publicly
 
-<img width="5331" height="2954" alt="N=6400_S=1000000_a" src="https://github.com/user-attachments/assets/6403e676-0e49-4cd9-89f1-7a902cc7d0d2" />
+<img width="4687" height="2365" alt="N=6400_S=1000000_m" src="https://github.com/user-attachments/assets/1efad94b-e7a2-4663-bece-b87f6c20be83" />
 
 I think she pretty already
 
 still evolving though!
+
+<img width="5331" height="2954" alt="N=6400_S=1000000_a" src="https://github.com/user-attachments/assets/6403e676-0e49-4cd9-89f1-7a902cc7d0d2" />
+
+with some interesting dimensionality
+
+<img width="2970" height="1166" alt="N=6400_S=1000000_d" src="https://github.com/user-attachments/assets/cd88f247-7169-4df6-9873-0ecd171a72df" />
+
+and definitely seems to already be showing gravity-like behavior
+
+<img width="2964" height="1766" alt="N=6400_S=1000000_g" src="https://github.com/user-attachments/assets/7800b07b-ecf1-4ac0-85e8-60afc9b7ca3a" />
