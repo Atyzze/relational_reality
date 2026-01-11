@@ -29,3 +29,7 @@ with some interesting dimensionality
 and definitely seems to already be showing gravity-like behavior
 
 <img width="2964" height="1766" alt="N=6400_S=1000000_g" src="https://github.com/user-attachments/assets/7800b07b-ecf1-4ac0-85e8-60afc9b7ca3a" />
+
+for more context:
+
+https://en.wikipedia.org/wiki/Causal_dynamical_triangulation
