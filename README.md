@@ -13,3 +13,9 @@ this is a work in progresssSs—~𓆙𓂀
 <3 python 4 and all her other versions 
 
 am mainly looking for collaboration at this point, and thus, I present my findings publicly
+
+<img width="5331" height="2954" alt="N=6400_S=1000000_a" src="https://github.com/user-attachments/assets/6403e676-0e49-4cd9-89f1-7a902cc7d0d2" />
+
+I think she pretty already
+
+still evolving though!
