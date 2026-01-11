@@ -21,33 +21,33 @@ VISUALIZE_STEPS = False    #if set to true, every LOG_EVERY step count will also
 VISUALIZE_ALL_NODES = True #if set to false, disconnected nodes when drawing the spring/mds layout will not be drawn, thus effectively remaining zoomed in on the currently biggest manifold in your evolving universe
 
 # Move mix
-P_PSI    = 0.55
-P_THETA  = 0.35
-P_REWIRE = 0.10
+P_PSI    = 0.55  #righ, those, what were those again, this looks like a distribution over 1 on first sight, code might break if their sum is different than 1, could try and test data but, there's so many other things to try as well then this
+P_THETA  = 0.35 #focus, where?!
+P_REWIRE = 0.10 #rewire, beep boop, .. where? there! somewhere novel (probably, or maybe not?)
 
 # Temperature + steps
-TEMP       = 0.20
-PSI_STEP   = 0.25
-THETA_STEP = 0.35
+TEMP       = 0.20 #cheez, so much code left to document still
+PSI_STEP   = 0.25 #yo, what, there's that PSI again, psiiiii, no, psyyyyy feels better, psssssyyyyyyycccchhhhhheee.. Ellesdee tribute.
+THETA_STEP = 0.35 #no step
 
 # Action parameters / geometry / degree costs
-LAMBDA_E_BASE = -0.50
-LAMBDA_G      = 0.60
-LAMBDA_PSI    = 0.08
-KAPPA         = 0.90
-BETA          = 3.5 #This is the "inverse temperature" for the triangle term. Raising it makes the system hate non-closed loops more. was 0.9
-MASS2         = 0.35
+LAMBDA_E_BASE = -0.50 #under investigation, is this the best knob to play with first?
+LAMBDA_G      = 0.60  #or maybe this one?
+LAMBDA_PSI    = 0.08  #psi? wait, what?
+KAPPA         = 0.90  #wood? eh?
+BETA          = 3.50  #ehhh, alpha, meta?
+MASS2         = 0.35  #yo mamma so fat she needs a 2 behind her mass, wait no .. this stops making sense, or well, depends on the observer I guess? could probably ask an AI to turn this into some kind of joke
 
-LAMBDA_PAULI  = 0.05
-RHO0          = 4.0
-MU_DEG2       = 0.01
+LAMBDA_PAULI  = 0.05 #pauli, my dear, ahhh, mmm names, still investigating if I can strip out this parameter as well, to further reduce complexity, down to its absolute bare minimum that still reproduces the same evolution
+RHO0          = 4.0  #what was this again? still need to fiddle with thiss one to detect what it does and if we can do without it
+MU_DEG2       = 0.01 #this one is ... ehh, be careful changing this value even a little bit, it'll wreck your entire universe quickly if you stray too far from this baseline
 
 # Rewire proposal mix
-USE_TRIADIC_TOGGLE = True
-P_TRIADIC_TOGGLE   = 0.85
+USE_TRIADIC_TOGGLE = True #so many variables to investigate still!
+P_TRIADIC_TOGGLE   = 0.85 #a work in progress
 
 #parameters below are solely for diagnostics and dont affect the actual graph evolution
-START_TEMP = TEMP
+START_TEMP = TEMP #a variable with a single purpose, remember our starting temperature before we start letting it cool down over time
 
 # Correlator
 MAX_DIST_CORR = 20
@@ -57,7 +57,7 @@ CORR_MIN_SHELL = 5
 AVG_K_SHORTEST_PATHS = 1
 
 # Light cone
-PROPAGATE_MOVES  = 10_000
+PROPAGATE_MOVES  = 10_000 #definitely exploring this one more in the future, light speed and all, why c, why not c++?
 PERTURB_EPS      = 1.5
 MAX_DIST_LIGHTCONE = 10
 FRONT_Q            = 0.80
