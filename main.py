@@ -15,10 +15,10 @@ random.seed(SEED)
 np.random.seed(SEED)
 
 N =1600                    #lower this to 100 on your first run, to check how long it takes to crunch the numbers and to make sure the entire pipeline doesn't error, you might have to install some additional python libraries, see first line of code'
-STEP_COUNT  = N*1600    #how many compute cycles you want to iterate your universe into its future
+stepToNRatio = 4500 #still figuring out the exact scaling factor as we continue our exploration
+STEP_COUNT  = N*stepToNRatio    #how many compute cycles you want to iterate your universe into its future
 #we can estimate ideal step count to capture full crystalisation, we can also estimate triangle peak and through in advance, work in progresSs.. .
-
-LOG_EVERY   = 10_000       #how often you want your universe to report back to you, taking a peek in its inner procesSs
+LOG_EVERY   = 1000       #how often you want your universe to report back to you, taking a peek in its inner procesSs
 VISUALIZE_STEPS = False    #if set to true, every LOG_EVERY step count will also draw spring & mds layout (this is extremely compute heavy!, MDS projection scales o(n3)) and will take potentially decades depending the exact parameters above, if you log every single step ...)
 VISUALIZE_ALL_NODES = True #if set to false, disconnected nodes when drawing the spring/mds layout will not be drawn, thus effectively remaining zoomed in on the currently biggest manifold in your evolving universe
 
@@ -28,8 +28,8 @@ P_THETA  = 0.35 #focus, where?!
 P_REWIRE = 0.10 #rewire, beep boop, .. where? there! somewhere novel (probably, or maybe not?)
 
 # Temperature + steps
-TEMP       = 0.20 #cheez, so much code left to document still
-TEMP_SCALE_DOWN_FACTOR = 0.9999 #added another 9 after noticing current temperature went way too low already at N=6400S1M, bigger universes get more time to slowndown as they scale up, we can find the factor for this
+TEMP       = 0.20 #cheez, so much code left to document still (this is the universe starting temp)
+TEMP_SCALE_DOWN_FACTOR = 0.9999
 PSI_STEP   = 0.25 #yo, what, there's that PSI again, psiiiii, no, psyyyyy feels better, psssssyyyyyyycccchhhhhheee.. Ellesdee tribute.
 THETA_STEP = 0.35 #no step
 
@@ -89,41 +89,31 @@ XI_MIN_COUNT = 140
 def analyze_dimensionality(G, plot=True):
     N = G.number_of_nodes()
     centers = np.random.choice(list(G.nodes()), size=min(10, N), replace=False)
-
     rs_all = []
     counts_all = []
-
     for source in centers:
         dists = dict(nx.single_source_shortest_path_length(G, source))
         max_d = max(dists.values())
-
         # Cumulative count N(r)
         counts = np.zeros(max_d + 1)
         for d in dists.values():
             counts[d] += 1
         cumulative = np.cumsum(counts)
-
         valid_r = np.arange(1, len(cumulative))
         rs_all.extend(valid_r)
         counts_all.extend(cumulative[1:])
-
     # Log-Log Fit
     log_r = np.log(rs_all)
     log_n = np.log(counts_all)
-
     mask = (log_r > np.log(1.5)) & (log_r < np.log(8))
-
     d_H = np.nan
     if np.sum(mask) > 5:
         slope, intercept = np.polyfit(log_r[mask], log_n[mask], 1)
         d_H = slope
-
     # --- 2. Spectral Dimension (via Laplacian Eigenvalues) ---
     # L = D - A
     L = nx.laplacian_matrix(G).astype(float)
-
     evals = scipy.linalg.eigh(L.todense(), eigvals_only=True)
-
     # Heat Kernel Trace: P(t) = (1/N) * sum(exp(-lambda * t))
     # We scan t from small to large
     t_vals = np.logspace(-1, 2, 50)
@@ -132,25 +122,19 @@ def analyze_dimensionality(G, plot=True):
         # Sum of exponentials
         trace = np.sum(np.exp(-evals * t))
         p_t.append(trace / N)
-
     p_t = np.array(p_t)
-
     # Slope of log(P(t)) vs log(t) is -dS/2
     # We look for a linear region in log-log
     log_t = np.log(t_vals)
     log_p = np.log(p_t)
-
     # For N=1000, valid region is usually t=0.5 to t=5.0
     mask_spec = (t_vals > 0.5) & (t_vals < 5.0)
-
     d_S = np.nan
     if np.sum(mask_spec) > 5:
         slope_s, _ = np.polyfit(log_t[mask_spec], log_p[mask_spec], 1)
         d_S = -2 * slope_s
-
     if plot:
         fig, ax = plt.subplots(1, 2, figsize=(10, 4))
-
         # Hausdorff Plot
         ax[0].scatter(log_r, log_n, alpha=0.1, color='k')
         if not np.isnan(d_H):
@@ -158,7 +142,6 @@ def analyze_dimensionality(G, plot=True):
             ax[0].set_title(f"Hausdorff: Volume ~ r^{d_H:.2f}")
         ax[0].set_xlabel("log(radius)")
         ax[0].set_ylabel("log(cumulative nodes)")
-
         # Spectral Plot
         ax[1].plot(log_t, log_p, 'k.-')
         if not np.isnan(d_S):
@@ -166,31 +149,25 @@ def analyze_dimensionality(G, plot=True):
             ax[1].set_title(f"Spectral: P(t) ~ t^{{-{d_S:.2f}/2}}")
         ax[1].set_xlabel("log(diffusion time)")
         ax[1].set_ylabel("log(return prob)")
-
         print(f"Hausdorff:{d_H:.2f}")
         print(f"Spectral: {d_S:.2f}")
-
+        fig.suptitle( f"Relational Reality | N={N} | S={STEP_COUNT}", fontsize=12,)
         plt.tight_layout()
         plt.savefig(FRAMES_DIR+"/N="+str(N)+"_S="+str(STEP_COUNT) + "_d.png", dpi=300, bbox_inches="tight")
         plt.close()
-
     return d_H, d_S
 
 def compute_ollivier_ricci_flow(G, alpha=0.5):
     """
     Computes the 'Ollivier-Ricci Curvature' for every edge using a fixed
     laziness parameter (alpha) to remove degree bias.
-
     Standard Ollivier-Ricci uses alpha=0.5:
     - 50% mass stays at the node 'u'
     - 50% mass is distributed equally among neighbors of 'u'
-
     Kappa = 1 - (Wasserstein_Distance / Edge_Length)
     """
     print(f">> Calculating Einstein Geometry (Standard Ollivier-Ricci, alpha={alpha})...")
-
     curvature_map = {}
-
     # 1. Precompute all-pairs shortest paths (needed for Earth Mover's Distance)
     # Optimization: For larger graphs, consider computing this only for local neighborhoods
     try:
@@ -198,40 +175,31 @@ def compute_ollivier_ricci_flow(G, alpha=0.5):
     except Exception as e:
         print(f"Warning: Graph connectivity issue in Ricci calculation: {e}")
         return {}
-
     for u, v in G.edges():
         # Get neighbors (including self)
         # Note: G.neighbors(u) returns an iterator, so we listify it.
         # We handle 'u' (self) explicitly to assign the alpha mass.
-
         real_nbrs_u = list(G.neighbors(u))
         real_nbrs_v = list(G.neighbors(v))
-
         # Helper to build mass distribution
         def get_distribution(node, neighbors, alpha_val):
             degree = len(neighbors)
             # If isolated node (degree 0), all mass is on self
             if degree == 0:
                 return [node], np.array([1.0])
-
             # List of locations: [self, neighbor_1, neighbor_2, ...]
             locations = [node] + neighbors
-
             # Mass values
             masses = np.zeros(len(locations))
             masses[0] = alpha_val  # Mass on self
             masses[1:] = (1.0 - alpha_val) / degree  # Mass on neighbors
-
             return locations, masses
-
         # Define distributions
         locs_u, mu_u = get_distribution(u, real_nbrs_u, alpha)
         locs_v, mu_v = get_distribution(v, real_nbrs_v, alpha)
-
         # Create the Cost Matrix
         # Rows = neighbors of u (including u), Cols = neighbors of v (including v)
         M = np.zeros((len(locs_u), len(locs_v)))
-
         for i, node_i in enumerate(locs_u):
             for j, node_j in enumerate(locs_v):
                 # Distance lookup
@@ -241,110 +209,44 @@ def compute_ollivier_ricci_flow(G, alpha=0.5):
                     M[i, j] = path_lengths[node_i][node_j]
                 else:
                     M[i, j] = 9999.0
-
         # Calculate Earth Mover's Distance (Wasserstein)
         # emd2 returns the computed distance directly
         emd = ot.emd2(mu_u, mu_v, M)
-
         # Geometric Distance (Hop distance is always 1 for an edge)
         d_uv = 1.0
-
         # Ricci Curvature
         kappa = 1.0 - (emd / d_uv)
         curvature_map[(u, v)] = kappa
-
-    return curvature_map
-
-def compute_ollivier_ricci_flow_old(G):
-    """
-    Computes the 'Ollivier-Ricci Curvature' for every edge.
-    This measures if the space is 'spherical' (positive curvature, gravity)
-    or 'hyperbolic' (negative curvature, expansion).
-
-    Theory:
-    It compares the distance between two nodes (d) vs the distance
-    between their "clouds of neighbors" (W).
-    Kappa = 1 - (Wasserstein_Distance / Edge_Length)
-    """
-    print(">> Calculating Einstein Geometry (Ollivier-Ricci)...")
-
-    curvature_map = {}
-    nodes = list(G.nodes())
-
-    # 1. Precompute all-pairs shortest paths (needed for Earth Mover's Distance)
-    path_lengths = dict(nx.all_pairs_shortest_path_length(G))
-
-    for u, v in G.edges():
-        # Define the "Mass Distributions" (Ink Drops) at u and v
-        # We assume uniform distribution over neighbors (Standard Ricci)
-        nbrs_u = [u] + list(G.neighbors(u))
-        nbrs_v = [v] + list(G.neighbors(v))
-        mu_u = np.ones(len(nbrs_u)) / len(nbrs_u)
-        mu_v = np.ones(len(nbrs_v)) / len(nbrs_v)
-
-        # Create the Cost Matrix (Distance between every neighbor of u and every neighbor of v)
-        M = np.zeros((len(nbrs_u), len(nbrs_v)))
-        for i, nu in enumerate(nbrs_u):
-            for j, nv in enumerate(nbrs_v):
-                # Distance from path_lengths
-                try:
-                    M[i, j] = path_lengths[nu][nv]
-                except KeyError:
-                    M[i, j] = 999 # Should not happen in connected graph
-
-        # Calculate Earth Mover's Distance (Wasserstein)
-        emd = ot.emd2(mu_u, mu_v, M)
-
-        # Geometric Distance (Hop distance is always 1 for an edge)
-        d_uv = 1.0
-
-        # Ricci Curvature
-        kappa = 1.0 - (emd / d_uv)
-        curvature_map[(u, v)] = kappa
-
     return curvature_map
 
 def plot_general_relativity_check(G):
     # 1. Get T_mu_nu (Energy/Matter Density)
     # We use rho = |psi|^2
     matter_density = []
-
     # 2. Get R_mu_nu (Geometry/Curvature)
     # We average the edge curvatures to get a scalar value for the node
     edge_curvatures = compute_ollivier_ricci_flow(G)
     node_curvatures = {node: [] for node in G.nodes()}
-
     for (u, v), k in edge_curvatures.items():
         node_curvatures[u].append(k)
         node_curvatures[v].append(k)
-
     scalar_curvature = []
-
-    # Align the lists
     for i in G.nodes():
-        # Matter
         psi = G.nodes[i]["psi"]
         rho = float(psi.real**2 + psi.imag**2)
         matter_density.append(rho)
-
-        # Geometry
         if node_curvatures[i]:
             R = np.mean(node_curvatures[i])
         else:
             R = 0.0
         scalar_curvature.append(R)
-
     # 3. The "Truth" Plot
     plt.figure(figsize=(10, 6))
     plt.scatter(matter_density, scalar_curvature, alpha=0.6, c="teal", s=15, label="Node Data")
-
     # Fit a line (The "Gravitational Constant")
     m, b = np.polyfit(matter_density, scalar_curvature, 1)
-
-    plt.plot(matter_density, m*np.array(matter_density) + b, color="orange", lw=2,
-             label=f"Einstein Fit: R = {m:.3f}*T + {b:.3f}")
-
-    plt.title(f"The Einstein Test (N={len(G)})", fontsize=14)
+    plt.plot(matter_density, m*np.array(matter_density) + b, color="orange", lw=2, label=f"Einstein Fit: R = {m:.3f}*T + {b:.3f}")
+    plt.suptitle( f"Relational Reality | N={N} | S={STEP_COUNT}", fontsize=12,)
     plt.xlabel("Matter Density (T) -> |psi|^2", fontsize=12)
     plt.ylabel("Ricci Curvature (R) -> Geometry", fontsize=12)
     plt.grid(True, alpha=0.3)
@@ -352,13 +254,8 @@ def plot_general_relativity_check(G):
     plt.tight_layout()
     plt.savefig(FRAMES_DIR+"/N="+str(N)+"_S="+str(STEP_COUNT) + "_g.png", dpi=300, bbox_inches="tight")
     plt.close()
-
-    print("-" * 40)
-    print(f"RESULTS:")
     print(f"Slope (Gravitational Coupling G): {m:.4f}")
     print(f"Intercept (Cosmological Constant): {b:.4f}")
-    print("-" * 40)
-
 
 def init_graph():
     G = nx.Graph()
@@ -366,7 +263,6 @@ def init_graph():
     for i in G.nodes():
         G.nodes[i]["psi"] = np.random.normal(0.0, 0.1) + 1j * np.random.normal(0.0, 0.1)
     return G
-
 
 # -----------------------
 # UTILITIES: GAUGE
@@ -391,7 +287,6 @@ def apply_random_gauge_transform(G: nx.Graph, rng: np.random.Generator):
         G.nodes[i]["psi"] *= np.exp(1j * alpha[i])
     for a, b in G.edges():
         G[a][b]["theta"] = wrap_angle(G[a][b]["theta"] + alpha[a] - alpha[b])
-
 
 # -----------------------
 # ACTION TERMS
@@ -454,7 +349,6 @@ def local_energy_for_toggle_edge(G: nx.Graph, i: int, j: int, mu_deg2: float, ad
     e = 0.0
     e += deg2_energy_node(G, i, mu_deg2) + deg2_energy_node(G, j, mu_deg2)
     e += lambda_e_total() * float(G.number_of_edges())
-
     a, b = edge_key(i, j)
     if G.has_edge(a, b):
         e += hop_energy_edge(G, i, j)
@@ -463,7 +357,6 @@ def local_energy_for_toggle_edge(G: nx.Graph, i: int, j: int, mu_deg2: float, ad
         for k in common:
             e += triangle_energy(G, i, j, k)
     return float(e)
-
 
 # -----------------------
 # METROPOLIS / MH
@@ -482,7 +375,6 @@ def metropolis_hastings_accept(dS: float, log_qratio: float, temp: float) -> boo
     if exponent >= 0:
         return True
     return random.random() < math.exp(exponent)
-
 
 # -----------------------
 # DISTANCES / SHELLS
@@ -508,7 +400,6 @@ def shell_buckets(dist_map, max_d):
         if 0 <= d <= max_d:
             buckets[d].append(v)
     return buckets
-
 
 # -----------------------
 # TRIANGLE / GAUGE PROBES
@@ -573,7 +464,6 @@ def gauge_invariant_two_point(G: nx.Graph, i: int, j: int, k_paths: int = 1) -> 
     except nx.NetworkXNoPath:
         return 0.0 + 0.0j
 
-
 # -----------------------
 # CORRELATOR
 # -----------------------
@@ -582,7 +472,6 @@ def correlator_vs_distance_shellsample_fast(G, max_d, n_sources, samples_per_d_p
     nodes = np.array(list(G.nodes()), dtype=int)
     bins = defaultdict(list)
     counts = np.zeros(max_d + 1, dtype=int)
-
     for _ in range(n_sources):
         i = int(rng.choice(nodes))
         dist_map = bfs_distances(G, i, max_d)
@@ -597,7 +486,6 @@ def correlator_vs_distance_shellsample_fast(G, max_d, n_sources, samples_per_d_p
                 val = gauge_invariant_two_point(G, i, int(j), k_paths=k_paths)
                 bins[d].append(float(np.real(val)))
                 counts[d] += 1
-
     ds = np.arange(max_d + 1, dtype=int)
     means = np.array([float(np.mean(bins[d])) if len(bins[d]) else np.nan for d in ds], dtype=float)
     return ds, means, counts
@@ -616,7 +504,6 @@ def estimate_corr_length_masked(ds, corr, counts, fit_min=2, fit_max=8, min_coun
     if m >= -1e-9:
         return float("nan")
     return float(-1.0 / m)
-
 
 # -----------------------
 # LIGHT CONE
@@ -653,7 +540,6 @@ def fit_front_scaling(Rs, ts):
     a1, b1 = np.linalg.lstsq(A1, Rs, rcond=None)[0]
     pred1 = a1 * ts + b1
     sse1 = float(np.sum((Rs - pred1) ** 2))
-
     st = np.sqrt(ts)
     A2 = np.vstack([st, np.ones_like(st)]).T
     a2, b2 = np.linalg.lstsq(A2, Rs, rcond=None)[0]
@@ -661,7 +547,6 @@ def fit_front_scaling(Rs, ts):
     sse2 = float(np.sum((Rs - pred2) ** 2))
     return {"lin_a": float(a1), "lin_b": float(b1), "lin_sse": sse1,
             "sqrt_a": float(a2), "sqrt_b": float(b2), "sqrt_sse": sse2}
-
 
 # -----------------------
 # CURVATURE PROXY
@@ -682,7 +567,6 @@ def pearson_r(x, y):
     y = y - y.mean()
     denom = (np.linalg.norm(x) * np.linalg.norm(y) + 1e-12)
     return float(np.dot(x, y) / denom)
-
 
 # -----------------------
 # QUENCH HELPERS
@@ -710,7 +594,6 @@ def density_profile_vs_distance(G, source, max_d):
         counts[d] = len(shells[d])
         prof[d] = float(np.mean([rho_i(G, v) for v in shells[d]])) if shells[d] else np.nan
     return prof, counts
-
 
 # -----------------------
 # MOVES
@@ -740,7 +623,6 @@ def theta_update(G: nx.Graph, adj_sets=None):
     G[a][b]["theta"] = th0
     return False
 
-
 # -----------------------
 # REWIRING kernels
 # -----------------------
@@ -762,14 +644,12 @@ def rewire_mh_balanced_global(G: nx.Graph, mu_deg2: float, adj_sets, rng: np.ran
     E = G.number_of_edges()
     P = total_pairs(N)
     NE = P - E
-
     if E == 0:
         do_remove = False
     elif NE == 0:
         do_remove = True
     else:
         do_remove = (rng.random() < 0.5)
-
     if do_remove:
         a, b = random.choice(list(G.edges()))
         i, j = int(a), int(b)
@@ -777,61 +657,42 @@ def rewire_mh_balanced_global(G: nx.Graph, mu_deg2: float, adj_sets, rng: np.ran
         th0 = G[a][b]["theta"]
         common = adj_sets[i].intersection(adj_sets[j])
         n_common = len(common)
-
         e0 = local_energy_for_toggle_edge(G, i, j, mu_deg2, adj_sets=adj_sets)
-
         G.remove_edge(a, b)
         adj_sets[i].discard(j); adj_sets[j].discard(i)
-
         e1 = local_energy_for_toggle_edge(G, i, j, mu_deg2, adj_sets=adj_sets)
-
-
         dS = (e1 - e0)
-
-
         E_after = E - 1
         NE_after = P - E_after
         q_fwd = 0.5 * (1.0 / max(1, E))
         q_rev = 0.5 * (1.0 / max(1, NE_after))
         log_qratio = math.log(q_rev) - math.log(q_fwd)
-
         if metropolis_hastings_accept(dS, log_qratio, TEMP):
             return True
-
         G.add_edge(a, b)
         G[a][b]["theta"] = th0
         adj_sets[i].add(j); adj_sets[j].add(i)
         return False
-
     pair = sample_non_edge_pair(G, rng)
     if pair is None:
         return False
     i, j = pair
     a, b = edge_key(i, j)
-
     common = adj_sets[i].intersection(adj_sets[j])
     n_common = len(common)
-
     e0 = local_energy_for_toggle_edge(G, i, j, mu_deg2, adj_sets=adj_sets)
-
     G.add_edge(a, b)
     G[a][b]["theta"] = float(rng.uniform(-math.pi, math.pi))
     adj_sets[i].add(j); adj_sets[j].add(i)
-
     e1 = local_energy_for_toggle_edge(G, i, j, mu_deg2, adj_sets=adj_sets)
-
-
     dS = (e1 - e0)
-
     E_after = E + 1
     NE_after = P - E_after
     q_fwd = 0.5 * (1.0 / max(1, NE))
     q_rev = 0.5 * (1.0 / max(1, E_after))
     log_qratio = math.log(q_rev) - math.log(q_fwd)
-
     if metropolis_hastings_accept(dS, log_qratio, TEMP):
         return True
-
     if G.has_edge(a, b):
         G.remove_edge(a, b)
     adj_sets[i].discard(j); adj_sets[j].discard(i)
@@ -848,12 +709,9 @@ def rewire_symmetric_triadic_toggle(G: nx.Graph, mu_deg2: float, adj_sets, rng: 
         return False
     a, b = edge_key(i, j)
     existed = G.has_edge(a, b)
-
     common = adj_sets[i].intersection(adj_sets[j])
     n_common = len(common)
-
     e0 = local_energy_for_toggle_edge(G, i, j, mu_deg2, adj_sets=adj_sets)
-
     if existed:
         th0 = G[a][b]["theta"]
         G.remove_edge(a, b)
@@ -863,16 +721,10 @@ def rewire_symmetric_triadic_toggle(G: nx.Graph, mu_deg2: float, adj_sets, rng: 
         G.add_edge(a, b)
         G[a][b]["theta"] = float(rng.uniform(-math.pi, math.pi))
         adj_sets[i].add(j); adj_sets[j].add(i)
-
     e1 = local_energy_for_toggle_edge(G, i, j, mu_deg2, adj_sets=adj_sets)
-
-
-
     dS = (e1 - e0)
-
     if metropolis_accept(dS, TEMP):
         return True
-
     # rollback
     if existed:
         G.add_edge(a, b)
@@ -889,45 +741,29 @@ def rewire_move(G, mu_deg2, adj_sets, rng):
         return rewire_symmetric_triadic_toggle(G, mu_deg2, adj_sets, rng)
     return rewire_mh_balanced_global(G, mu_deg2, adj_sets, rng)
 
-
 # -----------------------
 # MAIN RUN
 # -----------------------
 def run():
     global MU_DEG2, DELTA_LAMBDA_E, TEMP, max_tri_count
-
     acc_rew = tot_rew = 0
     start_time = time.time()
-
-    # NEW: Tracking variables for Triangle Calculus
     prev_tri = 0      # Triangle count at last log
     prev_d_tri = 0    # Velocity at last log
-
-    # NEW: Global Timer String
     elapsed_str = "0:00:00"
-
     print(">> Starting Simulation Loop...")
-
-
     G = init_graph()
     nodes = list(G.nodes())
     rng = np.random.default_rng(SEED + 123)
     adj_sets = {u: set() for u in G.nodes()}  # starts empty
-
     eq_log = {"moves": [], "mean_deg": [], "tri_flux": [], "corr_d1": [],
               "acc_rewire": [], "triangles": [], "lambda_e_total": [], "delta_lambda_e": []}
-
     tri_samples = []
-
     acc_rew = tot_rew = 0
     integ_err = 0.0
-
     start_time = time.time()
-
     for t in range(1, STEP_COUNT + 1):
         TEMP = TEMP*TEMP_SCALE_DOWN_FACTOR
-        #progress = t / STEP_COUNT  # <--- DON'T FORGET THIS DIVISION
-        #TEMP = TEMP_START - (progress * (TEMP_START - TEMP_END))
         r = random.random()
         if r < P_PSI:
             psi_update(G)
@@ -937,15 +773,10 @@ def run():
             tot_rew += 1
             ok = rewire_move(G, MU_DEG2, adj_sets, rng)
             acc_rew += int(ok)
-
-
-
         if t % LOG_EVERY == 0 or t == STEP_COUNT:
             md = float(np.mean([G.degree(i) for i in nodes]))
-
             if (t % (10 * LOG_EVERY) == 0) or (t == LOG_EVERY) or (len(tri_samples) < 200):
                 tri_samples = sample_triangles(G, max_tri=2500)
-
             tri_vals = []
             for tri in tri_samples:
                 v = triangle_flux_real(G, tri)
@@ -954,7 +785,6 @@ def run():
                 if len(tri_vals) >= 250:
                     break
             tri_flux = float(np.mean(tri_vals)) if tri_vals else 0.0
-
             if G.number_of_edges() > 0:
                 es = random.sample(list(G.edges()), k=min(300, G.number_of_edges()))
                 vals = []
@@ -966,13 +796,11 @@ def run():
                 corr1 = float(np.mean(vals))
             else:
                 corr1 = 0.0
-
             tri_count = sum(nx.triangles(G).values()) // 3 if G.number_of_edges() else 0
             ar = acc_rew / max(1, tot_rew)
             elapsed = time.time() - start_time
             sps = t / max(1e-9, elapsed)  # steps per second
             eta = (STEP_COUNT - t) / sps # estimated seconds remaining
-
             eq_log["moves"].append(t)
             eq_log["mean_deg"].append(md)
             eq_log["tri_flux"].append(tri_flux)
@@ -980,78 +808,56 @@ def run():
             eq_log["acc_rewire"].append(ar)
             eq_log["triangles"].append(tri_count)
             eq_log["lambda_e_total"].append(lambda_e_total())
-
             # --- MATH: TRIANGLE KINEMATICS ---
             d_tri = tri_count - prev_tri      # Velocity (New - Old)
             acc_tri = d_tri - prev_d_tri      # Acceleration (Curr Speed - Old Speed)
-
-            # Update state for next loop
             prev_tri = tri_count
             prev_d_tri = d_tri
-            # ---------------------------------
-
             # --- MATH: TIME & ETA ---
             current_time = time.time()
             elapsed = current_time - start_time
             sps = t / max(1e-9, elapsed)
-
             # Estimated Time Remaining
             remaining_steps = STEP_COUNT - t
             eta_seconds = int(remaining_steps / sps)
-
             # Formatting Strings
             elapsed_str = str(timedelta(seconds=int(elapsed)))
             eta_str = str(timedelta(seconds=eta_seconds))
-            print(f"{t/1e6:.3f}/{STEP_COUNT/1e6:.1f}M | {elapsed_str:>8} | "
-                  f"T{TEMP:.8e} | k{md:.3f} | "
+            print(f"{t/1e6:.3f}/{STEP_COUNT/1e6:.2f}M | {elapsed_str:>8} | "
+                  f"T{TEMP:.3e} | k{md:.3f} | "
                   f"tri{tri_count:6d} ({d_tri:+4d}) [{acc_tri:+4d}] | "
-                  f"Re(loop){tri_flux:.3f} | d=1 corr{corr1:.3f} |  acc(rew){ar:.3f} "
+                  f"Re(loop){tri_flux:.3f} | d=1 corr{corr1:.3f} |  acc(rew){ar:.3f} | "
                   f"{sps:.0f} sps | ETA {eta_str}")
-
-
             acc_rew = tot_rew = 0
             # After calculating tri_count:
             if tri_count > max_tri_count:
                 max_tri_count = tri_count
             if VISUALIZE_STEPS:
                 plot_emergent_geometry(G, t)
-
-
-
-
-
     #main loop done
     print(">> Equilibration done.")
     tri_count_final = sum(nx.triangles(G).values()) // 3 if G.number_of_edges() else 0
     print(">> triangle count (exact):", tri_count_final)
-
     # Gauge invariance check
     print(">> Gauge invariance check...")
     tri_samples = sample_triangles(G, max_tri=2500)
-
     def tri_is_alive(tri):
         i, j, k = tri
         return (G.has_edge(*edge_key(i, j)) and
                 G.has_edge(*edge_key(j, k)) and
                 G.has_edge(*edge_key(k, i)))
-
     tri_check = [tri for tri in tri_samples if tri_is_alive(tri)][:300]
     pair_check = [tuple(rng.choice(nodes, size=2, replace=False)) for _ in range(250)]
-
     tri_before = np.array([triangle_flux_real(G, tri) for tri in tri_check], dtype=float)
     pair_before = np.array([gauge_invariant_two_point(G, i, j, k_paths=AVG_K_SHORTEST_PATHS) for i, j in pair_check], dtype=complex)
-
     apply_random_gauge_transform(G, rng)
-
     tri_after = np.array([triangle_flux_real(G, tri) for tri in tri_check], dtype=float)
     pair_after = np.array([gauge_invariant_two_point(G, i, j, k_paths=AVG_K_SHORTEST_PATHS) for i, j in pair_check], dtype=complex)
-
     tri_diff = float(np.nanmax(np.abs(tri_after - tri_before))) if len(tri_before) else 0.0
     pair_diff_re = float(np.max(np.abs(np.real(pair_after) - np.real(pair_before)))) if len(pair_before) else 0.0
     pair_diff_im = float(np.max(np.abs(np.imag(pair_after) - np.imag(pair_before)))) if len(pair_before) else 0.0
     print(f"  gauge: max |Δ loop| = {tri_diff:.3e}")
     print(f"  gauge: max |Δ corr Re| = {pair_diff_re:.3e} | max |Δ corr Im| = {pair_diff_im:.3e}")
-
     # Correlator
     print(">> Correlator vs hop distance...")
     ds, corr, corr_counts = correlator_vs_distance_shellsample_fast(
@@ -1063,11 +869,7 @@ def run():
         seed=SEED,
         k_paths=AVG_K_SHORTEST_PATHS,
     )
-    xi_est = estimate_corr_length_masked(ds, corr, corr_counts,
-                                         fit_min=XI_FIT_MIN,
-                                         fit_max=min(XI_FIT_MAX, MAX_DIST_CORR),
-                                         min_count=XI_MIN_COUNT)
-
+    xi_est = estimate_corr_length_masked(ds, corr, corr_counts, fit_min=XI_FIT_MIN,fit_max=min(XI_FIT_MAX, MAX_DIST_CORR), min_count=XI_MIN_COUNT)
     # Curvature–density
     if G.number_of_edges():
         comp = max(nx.connected_components(G), key=len)
@@ -1077,41 +879,28 @@ def run():
     rho = np.array([rho_i(G, i) for i in sample_nodes], dtype=float)
     curv = np.array([node_curvature_proxy(G, i) for i in sample_nodes], dtype=float)
     r_rho_curv = pearson_r(rho, curv)
-
-    # Quench
-    r_resp = float("nan")
-    delta_curv_prof = delta_rho_prof = None
-    shell_counts_quench = None
-
-   # -----------------------
-    # QUENCH (ISOLATED COPY)
+    # -----------------------
+    # QUENCH
     # -----------------------
     r_resp = float("nan")
     delta_curv_prof = delta_rho_prof = None
     shell_counts_quench = None
-
     if DO_QUENCH and G.number_of_edges():
         print(">> Quench response (Δρ vs Δcurv) ...")
-
         # 1. Create a Deep Copy of the Universe
         G_quench = G.copy()
-
         # 2. Rebuild adj_sets for the copy (Crucial for rewiring to work)
         adj_sets_quench = {n: set(G_quench.neighbors(n)) for n in G_quench.nodes()}
-
         comp_list = list(max(nx.connected_components(G_quench), key=len))
         quench_src = random.choice(comp_list)
-
         # Baseline profiles (measured on the copy)
         curv_before, sc1 = curvature_profile_vs_distance(G_quench, quench_src, MAX_DIST_QUENCH)
         rho_before, sc2 = density_profile_vs_distance(G_quench, quench_src, MAX_DIST_QUENCH)
         shell_counts_quench = np.minimum(sc1, sc2)
-
         # 3. Inject Energy into the Copy
         region_nodes, _ = nodes_within_radius(G_quench, quench_src, QUENCH_RADIUS)
         for v in region_nodes:
             G_quench.nodes[v]["psi"] += (QUENCH_STRENGTH + 0.0j)
-
         # 4. Relax Stage 1 (Geometry Frozen)
         # Note: We pass G_quench and adj_sets_quench
         for _ in range(QUENCH_RELAX_MOVES_STAGE1):
@@ -1120,7 +909,6 @@ def run():
                 psi_update(G_quench)
             else:
                 theta_update(G_quench, adj_sets=adj_sets_quench)
-
         # 5. Relax Stage 2 (Geometry Active)
         for _ in range(QUENCH_RELAX_MOVES_STAGE2):
             rr = random.random()
@@ -1132,26 +920,17 @@ def run():
                     psi_update(G_quench)
                 else:
                     theta_update(G_quench, adj_sets=adj_sets_quench)
-
         # 6. Measure Response on the Copy
         curv_after, sc3 = curvature_profile_vs_distance(G_quench, quench_src, MAX_DIST_QUENCH)
         rho_after, sc4 = density_profile_vs_distance(G_quench, quench_src, MAX_DIST_QUENCH)
-
         # Combine counts
         shell_counts_quench = np.minimum.reduce([shell_counts_quench, sc3, sc4])
-
         delta_curv_prof = curv_after - curv_before
         delta_rho_prof = rho_after - rho_before
-
         mask = np.isfinite(delta_rho_prof) & np.isfinite(delta_curv_prof) & (shell_counts_quench >= MIN_SHELL_QUENCH)
         if np.sum(mask) >= 3:
             r_resp = pearson_r(delta_rho_prof[mask], delta_curv_prof[mask])
-
         print(f"   quench r(Δρ,Δcurv) ≈ {r_resp:.3f}")
-
-        # G_quench is discarded here; the main G remains pristine for the Light Cone test.
-
-    # Light cone
     print(">> Light cone (geometry frozen)...")
     src = random.choice(list(comp))
     dist_map = bfs_distances(G, src, MAX_DIST_LIGHTCONE)
@@ -1159,10 +938,7 @@ def run():
     #G.nodes[src]["psi"] += (PERTURB_EPS + 0.0j)
     G.nodes[src]["psi"] *= (1.0 + PERTURB_EPS)
     cone_times, cone_matrix = [], []
-
-    # NEW: Define a specific logging interval for the light cone
     LC_LOG_STEP = 100
-
     for t in range(1, PROPAGATE_MOVES + 1):
         rr = random.random()
         if rr < (P_PSI / (P_PSI + P_THETA)):
@@ -1174,11 +950,9 @@ def run():
         if t % LC_LOG_STEP == 0:
             cone_times.append(t)
             cone_matrix.append(lightcone_measurement(dist_map, baseline_abspsi, G, MAX_DIST_LIGHTCONE))
-
     cone_matrix = np.array(cone_matrix)
     A = np.abs(cone_matrix)
     dgrid = np.arange(A.shape[1], dtype=float)
-
     Rs_q, ts_q = [], []
     for ti, t in enumerate(cone_times):
         Rq = quantile_radius(A[ti], q=FRONT_Q)
@@ -1187,47 +961,38 @@ def run():
     fit_q = fit_front_scaling(Rs_q, ts_q) if len(ts_q) >= 5 else {}
     if fit_q:
         print(f"   front fit q={FRONT_Q:.2f}: linear SSE={fit_q['lin_sse']:.3g}, sqrt SSE={fit_q['sqrt_sse']:.3g}")
-
     md_final = float(np.mean([G.degree(i) for i in G.nodes()]))
     print(">> Summary:")
     print(f"   <k>={md_final:.2f} | λE_total={lambda_e_total():+.3f} ")
     print(f"   backreaction r(ρ,curv) ≈ {r_rho_curv:.3f}")
     print(f"   xi ≈ {xi_est:.3f} hops")
     print(f"   triangles = {tri_count_final}")
-
-
     # -------- plots --------
     fig, axs = plt.subplots(2, 3, figsize=(18, 10))
     plt.subplots_adjust(hspace=0.28, wspace=0.22)
-
     # 1. Equilibration (Dual Axis)
     # Primary Y-axis: Degree, Flux, Correlation, Acceptance
     ln1 = axs[0, 0].plot(eq_log["moves"], eq_log["mean_deg"], label="Mean degree", color="tab:blue")
     ln2 = axs[0, 0].plot(eq_log["moves"], eq_log["tri_flux"], label="Mean Re(loop)", color="tab:orange")
     ln3 = axs[0, 0].plot(eq_log["moves"], eq_log["corr_d1"], label="d=1 corr", color="tab:green")
     ln4 = axs[0, 0].plot(eq_log["moves"], eq_log["acc_rewire"], label="Acc(rewire)", color="tab:red", linestyle="--")
-
     axs[0, 0].set_xlabel("Moves")
     axs[0, 0].set_ylabel("Degree / Flux / Prob")
     axs[0, 0].set_title("Equilibration: Topology vs Triangles")
     axs[0, 0].grid(True, alpha=0.3)
-
     # Secondary Y-axis (Right): Triangle Count
     ax_tri = axs[0, 0].twinx()
     ln5 = ax_tri.plot(eq_log["moves"], eq_log["triangles"], label="Total Triangles", color="tab:purple", linewidth=2, alpha=0.5)
     ax_tri.set_ylabel("Triangle Count")
-
     # Combined Legend
     lns = ln1 + ln2 + ln3 + ln4 + ln5
     labs = [l.get_label() for l in lns]
     axs[0, 0].legend(lns, labs, loc="center right")
-
     # 2. Correlator
     axs[0, 1].plot(ds, corr, marker="o")
     axs[0, 1].set_title("Gauge-invariant correlator vs hop distance")
     axs[0, 1].set_xlabel("Hop distance d")
     axs[0, 1].grid(True, alpha=0.3)
-
     # 3. Quench Response
     axs[0, 2].set_title("Quench response: Δρ(d) and Δcurv(d)")
     axs[0, 2].set_xlabel("Hop distance d")
@@ -1237,7 +1002,6 @@ def run():
         axs[0, 2].plot(dgrid_qc, delta_rho_prof, marker="o", label="Δρ(d)")
         axs[0, 2].plot(dgrid_qc, delta_curv_prof, marker="o", label="Δcurv(d)")
         axs[0, 2].legend()
-
     # 4. Light Cone
     im = axs[1, 0].imshow(
         cone_matrix,
@@ -1249,14 +1013,12 @@ def run():
     axs[1, 0].set_xlabel("Hop distance from source")
     axs[1, 0].set_ylabel("Moves (time)")
     plt.colorbar(im, ax=axs[1, 0], label="Mean Δ|psi|")
-
     # 5. Curvature vs Density
     axs[1, 1].scatter(rho, curv, s=18, alpha=0.7)
     axs[1, 1].set_title("Curvature–density diagnostic")
     axs[1, 1].set_xlabel("ρ = |psi|^2")
     axs[1, 1].set_ylabel("Node curvature proxy")
     axs[1, 1].grid(True, alpha=0.3)
-
     # 6. Text Stats
     axs[1, 2].axis("off")
     axs[1, 2].text(
@@ -1266,23 +1028,19 @@ def run():
         f"- Gauge: maxΔcorr(Re)={pair_diff_re:.2e}, maxΔcorr(Im)={pair_diff_im:.2e}\n"
         f"- Backreaction: r(ρ,curv)≈{r_rho_curv:.2f}\n"
         f"- Quench: r(Δρ,Δcurv)≈{r_resp:.2f}\n"
-        f"- xi≈{xi_est:.2f} | trianglesFinal={tri_count_final} trianglesTop={max_tri_count}\n"
+        f"- xi≈{xi_est:.2f}\n"
         f"- <k>≈{md_final:.2f} | λE_base={LAMBDA_E_BASE:+.3g}\n"
         f"- Pauli: λP={LAMBDA_PAULI}, ρ0={RHO0}\n"
-        f"- κ={KAPPA}, β={BETA\}n"
+        f"- κ={KAPPA}, β={BETA}\n"
         f"- μ={MU_DEG2:.3g}\n"
         f"- λG={LAMBDA_G}\n"
-        f"- Tstart={START_TEMP}, TscaleDownFactor={TEMP_SCALE_DOWN_FACTOR}\n",
-
-        va="top",
-        fontsize=10,
-    )
-
-    fig.suptitle( f"Relational Reality | N={N} ", fontsize=12,)
+        f"- Tstart={START_TEMP}, TscaleDownFactor={TEMP_SCALE_DOWN_FACTOR}\n"
+        f"- trianglesTop={max_tri_count} | trianglesFinal={tri_count_final}",
+        va="top",fontsize=10,)
+    fig.suptitle( f"Relational Reality | N={N} | S={STEP_COUNT}", fontsize=12,)
     plt.tight_layout()
     plt.savefig(FRAMES_DIR+"/N="+str(N)+"_S="+str(STEP_COUNT) + "_a.png", dpi=300, bbox_inches="tight")
     plt.close()
-
     return G
 
 # Emergent Geometry (Spring + MDS)
@@ -1293,15 +1051,12 @@ def plot_emergent_geometry(G: nx.Graph, step):
         G_vis = G
     else:
         G_vis = G.subgraph(largest_cc_nodes).copy()
-
     pos_spring = nx.spring_layout(G_vis, k=0.15, iterations=50)
-
     if G_vis.number_of_edges() == 0:
         pos_mds = np.zeros((len(G_vis.nodes()), 2))
     else:
         dist_matrix = nx.floyd_warshall_numpy(G_vis)
         finite = np.isfinite(dist_matrix)
-
         if np.any(finite):
             flat_finite = dist_matrix[finite]
             # Avoid zero-max error if only self-loops exist
@@ -1309,7 +1064,6 @@ def plot_emergent_geometry(G: nx.Graph, step):
             dist_matrix[~finite] = max_d * 2.0
         else:
             dist_matrix[:] = 1.0
-
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", category=RuntimeWarning)
             mds = MDS(
@@ -1320,9 +1074,7 @@ def plot_emergent_geometry(G: nx.Graph, step):
                 normalized_stress="auto"
             )
             pos_mds = mds.fit_transform(dist_matrix)
-
     fig, axs = plt.subplots(1, 2, figsize=(16, 8))
-
     # Left: Topology
     nx.draw_networkx_edges(G_vis, pos_spring, ax=axs[0], alpha=0.03, edge_color="gray")
     nx.draw_networkx_nodes(
@@ -1333,7 +1085,6 @@ def plot_emergent_geometry(G: nx.Graph, step):
     )
     axs[0].set_title("Physical Topology: Spring-Mass Embedding")
     axs[0].axis("off")
-
     # Right: Emergent Geometry
     sc = axs[1].scatter(
         pos_mds[:, 0], pos_mds[:, 1],
@@ -1344,7 +1095,7 @@ def plot_emergent_geometry(G: nx.Graph, step):
     plt.colorbar(sc, ax=axs[1], label="Matter Density ρ=|psi|²")
     axs[1].set_title("MDS Projection: The Emergent Manifold")
     axs[1].axis("off")
-
+    fig.suptitle( f"Relational Reality | N={N} | S={STEP_COUNT}", fontsize=12,)
     plt.tight_layout()
     plt.savefig(FRAMES_DIR + "/N="+str(N)+"_S="+str(step) + "_m.png", dpi=300, bbox_inches="tight")
     plt.close()
@@ -1352,20 +1103,21 @@ def plot_emergent_geometry(G: nx.Graph, step):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run Relational Reality sSimulation")
     parser.add_argument("-N", "--nodes", type=int, default=N, help=f"Number of nodes (default: {N})")
-    parser.add_argument("-S", "--steps", type=int, default=STEP_COUNT, help=f"Number of steps (default: {STEP_COUNT})")
+    parser.add_argument("-S", "--steps", type=int, default=STEP_COUNT, help=f"Number of steps (default: {STEP_COUNT})") #let step count auto scale
     parser.add_argument("-s", "--seed", type=int, default=SEED, help="Seed number)")
     args = parser.parse_args()
-    N = args.nodes
-    STEP_COUNT = args.steps
+    if args.nodes:
+        N = args.nodes
+        STEP_COUNT = N * stepToNRatio
+    if args.steps:
+        STEP_COUNT = args.steps
     SEED = args.seed
-
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     FRAMES_DIR = f"runs/{timestamp}_N{N}_S{STEP_COUNT}_s{SEED}"
     os.makedirs(FRAMES_DIR, exist_ok=True)
     shutil.copy2(__file__, FRAMES_DIR)
     print(f">> Output directory created: {FRAMES_DIR}")
-    #am deliberately refusing to bother provide support for windows, the users but have to flip a single slash to make it all work with many digital tiny universsal pythons sSneks—~𓆙𓂀
-
+    #am not bothering to provide support for windows, the users but have to flip a single slash to make it all work with many digital tiny universsal pythons sSneks—~𓆙𓂀
     G = run()
     plot_general_relativity_check(G)
     print(f">> Calculacting dimensionality.. .")
