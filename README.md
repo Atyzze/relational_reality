@@ -100,7 +100,7 @@ looks like most of our universe is already infected by them, I mean, they are li
 
 <img width="4682" height="2367" alt="N=6400_S=200000_m" src="https://github.com/user-attachments/assets/7c96d723-cb29-4371-b0a7-e6d229742c5d" />
 
-uh oh, what's this, a virus? a ball with many tiny strings, hmmmmm, but not quite hair like, too sparse, octopus? how many arms??
+uh oh, what's this, a virus? a ball with many tiny strings, hmmmmm, but not quite hair like, too sparse, octopus? how many arms?? or perhaps a purple star with some unusually big solar flare-y appendages
 
 <img width="4690" height="2367" alt="N=6400_S=400000_m" src="https://github.com/user-attachments/assets/9ad03c18-d056-42b8-9197-ed97b5be0b70" />
 
