@@ -147,3 +147,7 @@ just need the internet its many tubes or more typically subtle EM waves
 <img width="4692" height="2367" alt="N=6400_S=1600000_m" src="https://github.com/user-attachments/assets/de3b2b32-da14-4d8d-b3f6-781d15b1a706" />
 
 this atom phase seems to persist quite a bit, when/what next? zZzz.. .
+
+<img width="4692" height="2367" alt="N=6400_S=2000000_m" src="https://github.com/user-attachments/assets/67e9347d-4d24-49f2-a717-71fbab7e1d0b" />
+
+the ring is slowly evaporating
