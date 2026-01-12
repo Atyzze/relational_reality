@@ -54,7 +54,7 @@ to do: attempt to identify and map all the phases for every N count in advance, 
 
 then pick 4 random nodes and shine a light, do this for each phase, compare results, I expect light to behave according to the universe its current phase / dimensionality 
 
-and an increasing N also only increasing resolution, keeping the exact same sequence in tact given the sasme seed
+and an increasing N also only increasing resolution, keeping the exact same sequence in tact given the same seed
 
 so we can theoretically scale it up to 10^186 planck volumes or 10^88 atoms, whatever number we want frankly, it's .. relational, that means, no hard limits, but ongoing communication/exchange/conversation, a procesSs.
 
@@ -70,7 +70,7 @@ reality refuses to be defined exactly, and that's exactly what flipped the first
 
 1 being the smallest amount of data, 0 being 'nothing' which can not exist without there being a 'something' else to compare itself against, just like how light and dark imply each other
 
-eventually, technically an infinite amount of space, as space time it's structure/bending/warping is a result of the underlying connections themselves. field, and their relations, spawn geometry
+eventually, technically an infinite amount of space, as space time it's structure/bending/warping is a result of the underlying connections themselves. a field as a web of relations not needing a defined location in spacetime, just, relative distance from each others neighbors is enough to eventually, spawn complex geometry and with an internal 3D experience.
 
 and an interesting ending
 
