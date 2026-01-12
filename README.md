@@ -96,7 +96,7 @@ microbes, how much time units to pop these into being like boltzman brains? what
 
 <img width="4682" height="2367" alt="N=6400_S=100000_m" src="https://github.com/user-attachments/assets/23683d94-a56f-48e9-ae22-eeb6c6b03052" />
 
-looks like most of our universe is already infected by them
+looks like most of our universe is already infected by them, I mean, they are literally the power house of most of our human cells, living ATP factories
 
 <img width="4682" height="2367" alt="N=6400_S=200000_m" src="https://github.com/user-attachments/assets/7c96d723-cb29-4371-b0a7-e6d229742c5d" />
 
