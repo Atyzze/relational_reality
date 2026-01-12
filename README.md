@@ -50,10 +50,78 @@ and look at that quench, 0.99, seems to be approaching a perfect 1!
 
 <img width="5331" height="2954" alt="N=6400_S=10000000_a" src="https://github.com/user-attachments/assets/f0fff896-7f22-48f5-8fea-8faf8c6254e8" />
 
-tomorrow, we shall attempt to define the 4 phases for every N count in advance, know the ideal step count to grow maximum amount of triangles and predicted drop off ~25% as well
-then pick 4 random nodes and shine a light, do this for each phase
-and compare results, will post here when data gathered
+to do: attempt to identify and map all the phases for every N count in advance, know the ideal parameters and step count to grow maximum amount of triangles
 
-am also running a N12800 in advance before getting the additional light cones accross all phases and multiple seeds
+then pick 4 random nodes and shine a light, do this for each phase, compare results, I expect light to behave according to the universe its current phase / dimensionality 
 
-we're close to finishing this project and moving on to pure visualisation running on the GPU instead? :)
+and an increasing N also only increasing resolution, keeping the exact same sequence in tact given the sasme seed
+
+so we can theoretically scale it up to 10^186 planck volumes or 10^88 atoms, whatever number we want frankly, it's .. relational, that means, no hard limits, but ongoing communication/exchange/conversation, a procesSs.
+
+am planning to run a N12800 sim when I'm done fine tuning all the knobs to their 1% best value guess
+
+and then, I'll collect and structure some thoughts around my findings, the process & its tolerance window, its assumptions, its scaling behavior, and at least 3 pictures for every mapped phase
+
+half way there, there, and half way to the next phase, for every phase
+
+with a uniform universe birthing spacetime itself as the start point, letting quantum foam be the permanent base RNG layer of our shared MMO reality
+
+reality refuses to be defined exactly, and that's exactly what flipped the first nondual bit into its opposite state, 0 & 1 are but our smallest labels for 'things'
+
+1 being the smallest amount of data, 0 being 'nothing' which can not exist without there being a 'something' else to compare itself against, just like how light and dark imply each other
+
+eventually, technically an infinite amount of space, as space time it's structure/bending/warping is a result of the underlying connections themselves. field, and their relations, spawn geometry
+
+and an interesting ending
+
+LFG/LFM N DPS/Tank
+
+this is how things start:
+
+<img width="4682" height="2367" alt="N=6400_S=1_m" src="https://github.com/user-attachments/assets/64263797-b87e-463c-b4be-9405978902d1" />
+
+and soon 
+
+<img width="4682" height="2367" alt="N=6400_S=100_m" src="https://github.com/user-attachments/assets/8f72f2cc-c2cf-45d2-bed2-135628abc01f" />
+
+and where there is one, there will be two eventually, the trend was already settled in the past, up from zero
+
+<img width="4682" height="2367" alt="N=6400_S=1000_m" src="https://github.com/user-attachments/assets/29fd69fe-c112-4ee6-a862-725b084f6e31" />
+
+oh, uh, or, a lot more than 2 already, kk
+
+<img width="4682" height="2367" alt="N=6400_S=10000_m" src="https://github.com/user-attachments/assets/30342f32-fdf3-465a-95df-595366d67e33" />
+
+microbes, how much time units to pop these into being like boltzman brains? what is the rank of relationship? how does it scale?
+
+<img width="4682" height="2367" alt="N=6400_S=100000_m" src="https://github.com/user-attachments/assets/23683d94-a56f-48e9-ae22-eeb6c6b03052" />
+
+looks like most of our universe is already infected by them
+
+<img width="4682" height="2367" alt="N=6400_S=200000_m" src="https://github.com/user-attachments/assets/7c96d723-cb29-4371-b0a7-e6d229742c5d" />
+
+uh oh, what's this, a virus? a ball with many tiny strings, hmmmmm, but not quite hair like, too sparse, octopus? how many arms??
+
+<img width="4690" height="2367" alt="N=6400_S=400000_m" src="https://github.com/user-attachments/assets/9ad03c18-d056-42b8-9197-ed97b5be0b70" />
+
+oh wait, no, a donut! a torus?
+
+<img width="4690" height="2367" alt="N=6400_S=500000_m" src="https://github.com/user-attachments/assets/4e7aa99f-1e39-4fa0-be67-3c9914cde02d" />
+
+wait, what's that thing on the right?
+
+<img width="4692" height="2367" alt="N=6400_S=600000_m" src="https://github.com/user-attachments/assets/e446301b-0783-4682-a7d4-3c817f1bcdcb" />
+
+it seems to be slowly absorbing the other universe of blobs
+
+<img width="4692" height="2367" alt="N=6400_S=700000_m" src="https://github.com/user-attachments/assets/c8094e8f-453e-4df1-9804-85716c964ad0" />
+
+starting to get thin
+
+<img width="4692" height="2367" alt="N=6400_S=800000_m" src="https://github.com/user-attachments/assets/920cd99a-7ba4-4c55-93d0-db6e387925e0" />
+
+and we've gone full circle already
+
+
+
+
