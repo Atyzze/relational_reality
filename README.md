@@ -143,3 +143,7 @@ yo, EU, U want data to train AI on? Hello China, Russia, USA, you know, the typi
 oh, can we merge the Euro into the ether book keeping system? won't have to rely on closed source software anymore to keep it secure, private & auditable, oh, and, fast, ... near instant transaction finality no matter where you are
 
 just need the internet its many tubes or more typically subtle EM waves
+
+<img width="4692" height="2367" alt="N=6400_S=1600000_m" src="https://github.com/user-attachments/assets/de3b2b32-da14-4d8d-b3f6-781d15b1a706" />
+
+this atom phase seems to persist quite a bit, when/what next? zZzz.. .
