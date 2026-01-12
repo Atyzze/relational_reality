@@ -10,17 +10,15 @@ from collections import defaultdict, deque
 from datetime import timedelta
 
 # CONFIG
-SEED = 1                   #seeds allow for reproducable results while also letting you infinitely long spin the RNG wheel
+SEED = 1                        #seeds allow for reproducable results while also letting you infinitely long spin the RNG wheel
 random.seed(SEED)
 np.random.seed(SEED)
-
-N =1600                    #lower this to 100 on your first run, to check how long it takes to crunch the numbers and to make sure the entire pipeline doesn't error, you might have to install some additional python libraries, see first line of code'
-stepToNRatio = 4500 #still figuring out the exact scaling factor as we continue our exploration
+N = 400
+stepToNRatio = 3000             #this will by default get you to the final triangle count, running more compute steps makes no difference anymore
 STEP_COUNT  = N*stepToNRatio    #how many compute cycles you want to iterate your universe into its future
-#we can estimate ideal step count to capture full crystalisation, we can also estimate triangle peak and through in advance, work in progresSs.. .
-LOG_EVERY   = 1000       #how often you want your universe to report back to you, taking a peek in its inner procesSs
-VISUALIZE_STEPS = False    #if set to true, every LOG_EVERY step count will also draw spring & mds layout (this is extremely compute heavy!, MDS projection scales o(n3)) and will take potentially decades depending the exact parameters above, if you log every single step ...)
-VISUALIZE_ALL_NODES = True #if set to false, disconnected nodes when drawing the spring/mds layout will not be drawn, thus effectively remaining zoomed in on the currently biggest manifold in your evolving universe
+LOG_EVERY   = 10_000            #how often you want your universe to report back to you, taking a peek in its inner procesSs
+VISUALIZE_STEPS = False         #if set to true, every LOG_EVERY step count will also draw spring & mds layout (this is extremely compute heavy!, MDS projection scales o(n3)) and will take potentially decades depending the exact parameters above, if you log every single step ...)
+VISUALIZE_ALL_NODES = True      #if set to false, disconnected nodes when drawing the spring/mds layout will not be drawn, thus effectively remaining zoomed in on the currently biggest manifold in your evolving universe
 
 # Move mix, never changed any of these parameters in this sectopm for the entire sim exploration
 P_PSI    = 0.55 #righ, those, what were those again, this looks like a distribution over 1 on first sight, code might break if their sum is different than 1, could try and test data but, there's so many other things to try as well then this
@@ -1102,16 +1100,18 @@ def plot_emergent_geometry(G: nx.Graph, step):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run Relational Reality sSimulation")
-    parser.add_argument("-N", "--nodes", type=int, default=N, help=f"Number of nodes (default: {N})")
-    parser.add_argument("-S", "--steps", type=int, default=STEP_COUNT, help=f"Number of steps (default: {STEP_COUNT})") #let step count auto scale
-    parser.add_argument("-s", "--seed", type=int, default=SEED, help="Seed number)")
+    parser.add_argument("-N", "--nodes", type=int, help=f"Number of nodes (default: {N})")
+    parser.add_argument("-S", "--steps", type=int, help=f"Number of steps (default: {STEP_COUNT})") #let step count auto scale
+    parser.add_argument("-s", "--seed", type=int, help=f"Seed number (default: {SEED})")
     args = parser.parse_args()
     if args.nodes:
         N = args.nodes
-        STEP_COUNT = N * stepToNRatio
     if args.steps:
         STEP_COUNT = args.steps
-    SEED = args.seed
+    else:
+        STEP_COUNT = N * stepToNRatio
+    if args.seed:
+        SEED = args.seed
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     FRAMES_DIR = f"runs/{timestamp}_N{N}_S{STEP_COUNT}_s{SEED}"
     os.makedirs(FRAMES_DIR, exist_ok=True)
