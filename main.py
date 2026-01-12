@@ -15,18 +15,21 @@ random.seed(SEED)
 np.random.seed(SEED)
 
 N =1600                    #lower this to 100 on your first run, to check how long it takes to crunch the numbers and to make sure the entire pipeline doesn't error, you might have to install some additional python libraries, see first line of code'
-STEP_COUNT  = 1_000_000    #how many compute cycles you want to iterate your universe into its future
+STEP_COUNT  = N*1600    #how many compute cycles you want to iterate your universe into its future
+#we can estimate ideal step count to capture full crystalisation, we can also estimate triangle peak and through in advance, work in progresSs.. .
+
 LOG_EVERY   = 10_000       #how often you want your universe to report back to you, taking a peek in its inner procesSs
 VISUALIZE_STEPS = False    #if set to true, every LOG_EVERY step count will also draw spring & mds layout (this is extremely compute heavy!, MDS projection scales o(n3)) and will take potentially decades depending the exact parameters above, if you log every single step ...)
 VISUALIZE_ALL_NODES = True #if set to false, disconnected nodes when drawing the spring/mds layout will not be drawn, thus effectively remaining zoomed in on the currently biggest manifold in your evolving universe
 
-# Move mix
-P_PSI    = 0.55  #righ, those, what were those again, this looks like a distribution over 1 on first sight, code might break if their sum is different than 1, could try and test data but, there's so many other things to try as well then this
+# Move mix, never changed any of these parameters in this sectopm for the entire sim exploration
+P_PSI    = 0.55 #righ, those, what were those again, this looks like a distribution over 1 on first sight, code might break if their sum is different than 1, could try and test data but, there's so many other things to try as well then this
 P_THETA  = 0.35 #focus, where?!
 P_REWIRE = 0.10 #rewire, beep boop, .. where? there! somewhere novel (probably, or maybe not?)
 
 # Temperature + steps
 TEMP       = 0.20 #cheez, so much code left to document still
+TEMP_SCALE_DOWN_FACTOR = 0.9999 #added another 9 after noticing current temperature went way too low already at N=6400S1M, bigger universes get more time to slowndown as they scale up, we can find the factor for this
 PSI_STEP   = 0.25 #yo, what, there's that PSI again, psiiiii, no, psyyyyy feels better, psssssyyyyyyycccchhhhhheee.. Ellesdee tribute.
 THETA_STEP = 0.35 #no step
 
@@ -48,6 +51,7 @@ P_TRIADIC_TOGGLE   = 0.85 #a work in progress
 
 #parameters below are solely for diagnostics and dont affect the actual graph evolution
 START_TEMP = TEMP #a variable with a single purpose, remember our starting temperature before we start letting it cool down over time
+max_tri_count = 0
 
 # Correlator
 MAX_DIST_CORR = 20
@@ -890,7 +894,21 @@ def rewire_move(G, mu_deg2, adj_sets, rng):
 # MAIN RUN
 # -----------------------
 def run():
-    global MU_DEG2, DELTA_LAMBDA_E, TEMP
+    global MU_DEG2, DELTA_LAMBDA_E, TEMP, max_tri_count
+
+    acc_rew = tot_rew = 0
+    start_time = time.time()
+
+    # NEW: Tracking variables for Triangle Calculus
+    prev_tri = 0      # Triangle count at last log
+    prev_d_tri = 0    # Velocity at last log
+
+    # NEW: Global Timer String
+    elapsed_str = "0:00:00"
+
+    print(">> Starting Simulation Loop...")
+
+
     G = init_graph()
     nodes = list(G.nodes())
     rng = np.random.default_rng(SEED + 123)
@@ -907,7 +925,7 @@ def run():
     start_time = time.time()
 
     for t in range(1, STEP_COUNT + 1):
-        TEMP = TEMP*0.999999
+        TEMP = TEMP*TEMP_SCALE_DOWN_FACTOR
         #progress = t / STEP_COUNT  # <--- DON'T FORGET THIS DIVISION
         #TEMP = TEMP_START - (progress * (TEMP_START - TEMP_END))
         r = random.random()
@@ -963,11 +981,38 @@ def run():
             eq_log["triangles"].append(tri_count)
             eq_log["lambda_e_total"].append(lambda_e_total())
 
-            print(f"{t/1e6:.3f}/{STEP_COUNT/1e6:.1f}M|T{TEMP:.3f}|k{md:.3f}|tri{tri_count:6d}|Re(loop){tri_flux:.3f}"
-                  f"|d=1 corr{corr1:.3f}  acc(rew){ar:.3f}|{sps:.0f}|{timedelta(seconds=int(eta))}" )
+            # --- MATH: TRIANGLE KINEMATICS ---
+            d_tri = tri_count - prev_tri      # Velocity (New - Old)
+            acc_tri = d_tri - prev_d_tri      # Acceleration (Curr Speed - Old Speed)
+
+            # Update state for next loop
+            prev_tri = tri_count
+            prev_d_tri = d_tri
+            # ---------------------------------
+
+            # --- MATH: TIME & ETA ---
+            current_time = time.time()
+            elapsed = current_time - start_time
+            sps = t / max(1e-9, elapsed)
+
+            # Estimated Time Remaining
+            remaining_steps = STEP_COUNT - t
+            eta_seconds = int(remaining_steps / sps)
+
+            # Formatting Strings
+            elapsed_str = str(timedelta(seconds=int(elapsed)))
+            eta_str = str(timedelta(seconds=eta_seconds))
+            print(f"{t/1e6:.3f}/{STEP_COUNT/1e6:.1f}M | {elapsed_str:>8} | "
+                  f"T{TEMP:.8e} | k{md:.3f} | "
+                  f"tri{tri_count:6d} ({d_tri:+4d}) [{acc_tri:+4d}] | "
+                  f"Re(loop){tri_flux:.3f} | d=1 corr{corr1:.3f} |  acc(rew){ar:.3f} "
+                  f"{sps:.0f} sps | ETA {eta_str}")
 
 
             acc_rew = tot_rew = 0
+            # After calculating tri_count:
+            if tri_count > max_tri_count:
+                max_tri_count = tri_count
             if VISUALIZE_STEPS:
                 plot_emergent_geometry(G, t)
 
@@ -1221,21 +1266,19 @@ def run():
         f"- Gauge: maxΔcorr(Re)={pair_diff_re:.2e}, maxΔcorr(Im)={pair_diff_im:.2e}\n"
         f"- Backreaction: r(ρ,curv)≈{r_rho_curv:.2f}\n"
         f"- Quench: r(Δρ,Δcurv)≈{r_resp:.2f}\n"
-        f"- xi≈{xi_est:.2f} | triangles={tri_count_final}\n"
+        f"- xi≈{xi_est:.2f} | trianglesFinal={tri_count_final} trianglesTop={max_tri_count}\n"
         f"- <k>≈{md_final:.2f} | λE_base={LAMBDA_E_BASE:+.3g}\n"
         f"- Pauli: λP={LAMBDA_PAULI}, ρ0={RHO0}\n"
-        f"- κ={KAPPA}\n"
-        f"- β={BETA}\n"
-        f"- T={START_TEMP}\n"
-        f"- κ={KAPPA}\n"
+        f"- κ={KAPPA}, β={BETA\}n"
         f"- μ={MU_DEG2:.3g}\n"
-        f"- λG={LAMBDA_G}\n",
+        f"- λG={LAMBDA_G}\n"
+        f"- Tstart={START_TEMP}, TscaleDownFactor={TEMP_SCALE_DOWN_FACTOR}\n",
 
         va="top",
         fontsize=10,
     )
 
-    fig.suptitle( f"Relational Physics | N={N} ", fontsize=12,)
+    fig.suptitle( f"Relational Reality | N={N} ", fontsize=12,)
     plt.tight_layout()
     plt.savefig(FRAMES_DIR+"/N="+str(N)+"_S="+str(STEP_COUNT) + "_a.png", dpi=300, bbox_inches="tight")
     plt.close()
