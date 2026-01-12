@@ -122,6 +122,10 @@ starting to get thin
 
 and we've gone full circle already
 
+<img width="4692" height="2367" alt="N=6400_S=1500000_m" src="https://github.com/user-attachments/assets/ecbf5b18-6585-4c03-9b30-23c4baca6890" />
+
+starting to look more and more atom-like
+
 
 
 
