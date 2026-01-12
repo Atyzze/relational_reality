@@ -126,6 +126,20 @@ and we've gone full circle already
 
 starting to look more and more atom-like
 
+ugh, okay, this is so slow, to be able to scale this up in any meaningful way, I'll need to separate the data gathering/generating from the visualising thread
 
+the link was always temporary, we knew we'd split it back it into two later, it just wasn't a first priority back then
 
+now it's starting to seem so
 
+so much work left still, should I ask an AI Agent to take it over from here?
+
+start with properly establishing the known metrics so we know whenever there is a failure due to deviation anywhere from our established baseline
+
+and then let it auto iterate and run through the suits from N100 to N whatever resource we have available as training ground for its infinite data stream for novelty generation
+
+yo, EU, U want data to train AI on? Hello China, Russia, USA, you know, the typical 'big three' 'always at war with each other' (1984) and thus the EU was born as the 4th player to be able to stand up against the bullies
+
+oh, can we merge the Euro into the ether book keeping system? won't have to rely on closed source software anymore to keep it secure, private & auditable, oh, and, fast, ... near instant transaction finality no matter where you are
+
+just need the internet its many tubes or more typically subtle EM waves
