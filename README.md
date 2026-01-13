@@ -163,3 +163,7 @@ but its actual dimensionality _does_ seem to scale with N count, still figuring 
 <img width="2960" height="1775" alt="N=6400_S=19200000_g" src="https://github.com/user-attachments/assets/e681738b-2055-4f2e-af00-04eab2c0079f" />
 
 <img width="2970" height="1191" alt="N=6400_S=19200000_d" src="https://github.com/user-attachments/assets/ca072c70-99c4-4010-92aa-6ec8685006cd" />
+
+<img width="3665" height="1507" alt="image" src="https://github.com/user-attachments/assets/f05b76b7-12d8-4dd1-aa4d-ba7c6be48d09" />
+
+
