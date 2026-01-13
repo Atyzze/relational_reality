@@ -104,6 +104,10 @@ looks like most of our universe is already infected by them, I mean, they are li
 
 from a 2d disk like looking thing, a circle, to ... sphere! a new dimension unlocked, from 2 to 3, just like how we went from 0 to 1 and already set the trend
 
+the big bang isn't really a _bang_, not a loud thing, it's just subtle infinite growth into more dimensions, it'll be interesting to see how many dimensions the crystal implies, or it might just hard converge on our standard 3/4
+
+that would at least imply that in between, there could have been unusual fluctuations
+
 <img width="4690" height="2367" alt="N=6400_S=400000_m" src="https://github.com/user-attachments/assets/9ad03c18-d056-42b8-9197-ed97b5be0b70" />
 
 oh wait, no, a donut! a torus?
@@ -205,3 +209,37 @@ Yet, we already have our own man made probes flying in between the stars, barely
 We should be able to build a ship that makes it there anyway, not due to traveling faster than light, but through having succeeded in having build a self sustaining spaceship with the only input needed being enough watter and asteroid mineral mining for all the needed internal energy book keeping. Then, we, as a species, can set sails again, to new worlds, where the exploration itself is almost the point of it all. And find that, there are other societies, who've already made the journey, and you're, technically, already on such a ship, and we call it Earth and yes you may explore the boundaries of your base ship as your heart desires.
 
 The philosophers got it right first. Relationism.
+
+4.680/38.40M |  2:50:21 | T1.099e-204 | k8.226 | tri 18392 ( +30) [  -4] | Re(loop)0.999 | d=1 corr0.384 |  acc(rew)0.132 | 458 sps | ETA 20:27:29
+4.690/38.40M |  2:51:01 | T4.043e-205 | k8.241 | tri 18418 ( +26) [  -4] | Re(loop)0.999 | d=1 corr0.389 |  acc(rew)0.119 | 457 sps | ETA 20:29:13
+4.700/38.40M |  2:51:39 | T1.487e-205 | k8.260 | tri 18450 ( +32) [  +6] | Re(loop)0.999 | d=1 corr0.369 |  acc(rew)0.143 | 456 sps | ETA 20:30:52
+4.710/38.40M |  2:52:20 | T5.471e-206 | k8.277 | tri 18486 ( +36) [  +4] | Re(loop)0.999 | d=1 corr0.371 |  acc(rew)0.126 | 455 sps | ETA 20:32:46
+4.720/38.40M |  2:53:00 | T2.013e-206 | k8.291 | tri 18496 ( +10) [ -26] | Re(loop)0.999 | d=1 corr0.434 |  acc(rew)0.132 | 455 sps | ETA 20:34:34
+4.730/38.40M |  2:53:41 | T7.404e-207 | k8.308 | tri 18531 ( +35) [ +25] | Re(loop)0.999 | d=1 corr0.397 |  acc(rew)0.133 | 454 sps | ETA 20:36:21
+4.740/38.40M |  2:54:20 | T2.724e-207 | k8.326 | tri 18559 ( +28) [  -7] | Re(loop)0.999 | d=1 corr0.397 |  acc(rew)0.119 | 453 sps | ETA 20:38:03
+4.750/38.40M |  2:55:00 | T1.002e-207 | k8.343 | tri 18598 ( +39) [ +11] | Re(loop)0.999 | d=1 corr0.461 |  acc(rew)0.129 | 452 sps | ETA 20:39:44
+4.760/38.40M |  2:55:35 | T3.686e-208 | k8.356 | tri 18604 (  +6) [ -33] | Re(loop)0.999 | d=1 corr0.357 |  acc(rew)0.116 | 452 sps | ETA 20:40:58
+4.770/38.40M |  2:56:11 | T1.356e-208 | k8.370 | tri 18631 ( +27) [ +21] | Re(loop)0.999 | d=1 corr0.353 |  acc(rew)0.118 | 451 sps | ETA 20:42:10
+4.780/38.40M |  2:56:47 | T4.988e-209 | k8.387 | tri 18670 ( +39) [ +12] | Re(loop)0.999 | d=1 corr0.373 |  acc(rew)0.130 | 451 sps | ETA 20:43:26
+4.790/38.40M |  2:57:23 | T1.835e-209 | k8.401 | tri 18695 ( +25) [ -14] | Re(loop)0.999 | d=1 corr0.388 |  acc(rew)0.120 | 450 sps | ETA 20:44:41
+4.800/38.40M |  2:57:59 | T6.749e-210 | k8.416 | tri 18722 ( +27) [  +2] | Re(loop)0.999 | d=1 corr0.384 |  acc(rew)0.128 | 449 sps | ETA 20:45:53
+4.810/38.40M |  2:58:34 | T2.483e-210 | k8.432 | tri 18749 ( +27) [  +0] | Re(loop)0.999 | d=1 corr0.332 |  acc(rew)0.129 | 449 sps | ETA 20:47:03
+4.820/38.40M |  2:59:14 | T9.133e-211 | k8.449 | tri 18779 ( +30) [  +3] | Re(loop)0.999 | d=1 corr0.411 |  acc(rew)0.143 | 448 sps | ETA 20:48:41
+
+I expect her triangles to pass 20k and go a little bit above, from there on out, I am probably going to notize that my ETA will stabilize instead of keep increasing for forever
+
+lets go do some math to see if we can expect her final stabilized triangle, and see how close we can get to predicting her peak count as well
+
+did some math sheet stuff, drew some tables with basic formulas, got div/0 errors, got frustrated, started typing out what I want, pasted it into the AI window
+
+got me exactly the 2 numbers I wanted to see, expected max and final triangle
+
+<img width="1595" height="1651" alt="image" src="https://github.com/user-attachments/assets/1b9b7082-8772-4c4c-91b0-61cb62e6c373" />
+
+<img width="3209" height="601" alt="image" src="https://github.com/user-attachments/assets/017df176-d846-4973-a839-18d5073a4e1b" />
+
+<img width="1563" height="1185" alt="image" src="https://github.com/user-attachments/assets/88616f05-9b81-43a2-841e-7929b51fa36a" />
+
+which one will have gotten it closest? ;)
+
+
