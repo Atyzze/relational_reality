@@ -158,3 +158,8 @@ eventually turns into the exact same crystal every time, interesting .. .
 
 but its actual dimensionality _does_ seem to scale with N count, still figuring out the trends/relationships to identify which knob to play with next
 
+<img width="5331" height="2954" alt="N=6400_S=19200000_a" src="https://github.com/user-attachments/assets/a856fd04-99fc-46dd-a588-621bd2796286" />
+
+<img width="2960" height="1775" alt="N=6400_S=19200000_g" src="https://github.com/user-attachments/assets/e681738b-2055-4f2e-af00-04eab2c0079f" />
+
+<img width="2970" height="1191" alt="N=6400_S=19200000_d" src="https://github.com/user-attachments/assets/ca072c70-99c4-4010-92aa-6ec8685006cd" />
