@@ -203,3 +203,5 @@ effectively, ley lines have a scientficic basis to them, in sheer principle alon
 Yet, we already have our own man made probes flying in between the stars, barely left our edge really, now it's just a long long time of mostly nothingness, no other stars or planets, nothing, for a looooooong time
 
 We should be able to build a ship that makes it there anyway, not due to traveling faster than light, but through having succeeded in having build a self sustaining spaceship with the only input needed being enough watter and asteroid mineral mining for all the needed internal energy book keeping. Then, we, as a species, can set sails again, to new worlds, where the exploration itself is almost the point of it all. And find that, there are other societies, who've already made the journey, and you're, technically, already on such a ship, and we call it Earth and yes you may explore the boundaries of your base ship as your heart desires.
+
+The philosophers got it right first. Relationism.
