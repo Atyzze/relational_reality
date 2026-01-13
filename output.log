@@ -1,126 +1,146 @@
->> Output directory created: runs/2026-01-10_14-09-29_N1000_S1000000_s1
-0.010/1.0M | <k>=0.366 | tri#=     6 | Re(loop)=0.574 | d=1 corr=0.212  acc(rew)=0.186 | 14899 it/s | ETA 66s
-0.020/1.0M | <k>=0.784 | tri#=    36 | Re(loop)=0.645 | d=1 corr=0.231  acc(rew)=0.216 | 13727 it/s | ETA 71s
-0.030/1.0M | <k>=1.288 | tri#=   106 | Re(loop)=0.762 | d=1 corr=0.258  acc(rew)=0.258 | 12896 it/s | ETA 75s
-0.040/1.0M | <k>=1.784 | tri#=   181 | Re(loop)=0.728 | d=1 corr=0.179  acc(rew)=0.275 | 12057 it/s | ETA 80s
-0.050/1.0M | <k>=2.260 | tri#=   246 | Re(loop)=0.781 | d=1 corr=0.207  acc(rew)=0.291 | 11435 it/s | ETA 83s
-0.060/1.0M | <k>=2.786 | tri#=   341 | Re(loop)=0.865 | d=1 corr=0.157  acc(rew)=0.310 | 10798 it/s | ETA 87s
-0.070/1.0M | <k>=3.344 | tri#=   416 | Re(loop)=0.870 | d=1 corr=0.106  acc(rew)=0.344 | 10280 it/s | ETA 90s
-0.080/1.0M | <k>=3.928 | tri#=   496 | Re(loop)=0.868 | d=1 corr=0.249  acc(rew)=0.368 | 9806 it/s | ETA 94s
-0.090/1.0M | <k>=4.310 | tri#=   494 | Re(loop)=0.890 | d=1 corr=0.146  acc(rew)=0.322 | 9259 it/s | ETA 98s
-0.100/1.0M | <k>=4.650 | tri#=   488 | Re(loop)=0.835 | d=1 corr=0.172  acc(rew)=0.301 | 8804 it/s | ETA 102s
-0.110/1.0M | <k>=5.018 | tri#=   483 | Re(loop)=0.860 | d=1 corr=0.106  acc(rew)=0.319 | 8418 it/s | ETA 106s
-0.120/1.0M | <k>=5.422 | tri#=   483 | Re(loop)=0.866 | d=1 corr=0.141  acc(rew)=0.319 | 8088 it/s | ETA 109s
-0.130/1.0M | <k>=5.748 | tri#=   465 | Re(loop)=0.892 | d=1 corr=0.104  acc(rew)=0.277 | 7816 it/s | ETA 111s
-0.140/1.0M | <k>=6.038 | tri#=   446 | Re(loop)=0.893 | d=1 corr=0.116  acc(rew)=0.286 | 7581 it/s | ETA 113s
-0.150/1.0M | <k>=6.300 | tri#=   408 | Re(loop)=0.905 | d=1 corr=0.148  acc(rew)=0.260 | 7363 it/s | ETA 115s
-0.160/1.0M | <k>=6.474 | tri#=   376 | Re(loop)=0.903 | d=1 corr=0.118  acc(rew)=0.254 | 7162 it/s | ETA 117s
-0.170/1.0M | <k>=6.688 | tri#=   363 | Re(loop)=0.884 | d=1 corr=0.019  acc(rew)=0.238 | 6984 it/s | ETA 119s
-0.180/1.0M | <k>=6.900 | tri#=   337 | Re(loop)=0.872 | d=1 corr=0.088  acc(rew)=0.226 | 6828 it/s | ETA 120s
-0.190/1.0M | <k>=7.078 | tri#=   304 | Re(loop)=0.901 | d=1 corr=0.108  acc(rew)=0.224 | 6685 it/s | ETA 121s
-0.200/1.0M | <k>=7.242 | tri#=   273 | Re(loop)=0.876 | d=1 corr=0.115  acc(rew)=0.256 | 6553 it/s | ETA 122s
-0.210/1.0M | <k>=7.438 | tri#=   254 | Re(loop)=0.875 | d=1 corr=0.048  acc(rew)=0.243 | 6435 it/s | ETA 123s
-0.220/1.0M | <k>=7.566 | tri#=   222 | Re(loop)=0.889 | d=1 corr=0.037  acc(rew)=0.197 | 6322 it/s | ETA 123s
-0.230/1.0M | <k>=7.708 | tri#=   199 | Re(loop)=0.891 | d=1 corr=0.034  acc(rew)=0.197 | 6223 it/s | ETA 124s
-0.240/1.0M | <k>=7.794 | tri#=   178 | Re(loop)=0.891 | d=1 corr=0.069  acc(rew)=0.203 | 6127 it/s | ETA 124s
-0.250/1.0M | <k>=7.844 | tri#=   162 | Re(loop)=0.888 | d=1 corr=0.103  acc(rew)=0.210 | 6040 it/s | ETA 124s
-0.260/1.0M | <k>=7.922 | tri#=   151 | Re(loop)=0.918 | d=1 corr=0.037  acc(rew)=0.203 | 5958 it/s | ETA 124s
-0.270/1.0M | <k>=7.980 | tri#=   138 | Re(loop)=0.884 | d=1 corr=0.075  acc(rew)=0.209 | 5870 it/s | ETA 124s
-0.280/1.0M | <k>=8.038 | tri#=   115 | Re(loop)=0.874 | d=1 corr=0.134  acc(rew)=0.198 | 5783 it/s | ETA 124s
-0.290/1.0M | <k>=8.130 | tri#=   105 | Re(loop)=0.890 | d=1 corr=-0.027  acc(rew)=0.180 | 5697 it/s | ETA 125s
-0.300/1.0M | <k>=8.166 | tri#=    97 | Re(loop)=0.898 | d=1 corr=0.095  acc(rew)=0.204 | 5616 it/s | ETA 125s
-0.310/1.0M | <k>=8.208 | tri#=    94 | Re(loop)=0.865 | d=1 corr=0.122  acc(rew)=0.191 | 5541 it/s | ETA 125s
-0.320/1.0M | <k>=8.244 | tri#=    81 | Re(loop)=0.863 | d=1 corr=0.088  acc(rew)=0.178 | 5471 it/s | ETA 124s
-0.330/1.0M | <k>=8.286 | tri#=    74 | Re(loop)=0.871 | d=1 corr=0.088  acc(rew)=0.209 | 5410 it/s | ETA 124s
-0.340/1.0M | <k>=8.272 | tri#=    71 | Re(loop)=0.894 | d=1 corr=0.105  acc(rew)=0.173 | 5354 it/s | ETA 123s
-0.350/1.0M | <k>=8.276 | tri#=    67 | Re(loop)=0.903 | d=1 corr=0.057  acc(rew)=0.158 | 5301 it/s | ETA 123s
-0.360/1.0M | <k>=8.344 | tri#=    66 | Re(loop)=0.883 | d=1 corr=0.065  acc(rew)=0.175 | 5253 it/s | ETA 122s
-0.370/1.0M | <k>=8.324 | tri#=    59 | Re(loop)=0.861 | d=1 corr=-0.002  acc(rew)=0.182 | 5204 it/s | ETA 121s
-0.380/1.0M | <k>=8.318 | tri#=    50 | Re(loop)=0.922 | d=1 corr=0.064  acc(rew)=0.163 | 5163 it/s | ETA 120s
-0.390/1.0M | <k>=8.306 | tri#=    43 | Re(loop)=0.903 | d=1 corr=0.101  acc(rew)=0.166 | 5122 it/s | ETA 119s
-0.400/1.0M | <k>=8.286 | tri#=    36 | Re(loop)=0.891 | d=1 corr=0.146  acc(rew)=0.192 | 5086 it/s | ETA 118s
-0.410/1.0M | <k>=8.314 | tri#=    38 | Re(loop)=0.859 | d=1 corr=0.149  acc(rew)=0.197 | 5049 it/s | ETA 117s
-0.420/1.0M | <k>=8.330 | tri#=    32 | Re(loop)=0.884 | d=1 corr=0.022  acc(rew)=0.183 | 5017 it/s | ETA 116s
-0.430/1.0M | <k>=8.362 | tri#=    32 | Re(loop)=0.842 | d=1 corr=0.073  acc(rew)=0.166 | 4985 it/s | ETA 114s
-0.440/1.0M | <k>=8.424 | tri#=    31 | Re(loop)=0.813 | d=1 corr=0.093  acc(rew)=0.210 | 4949 it/s | ETA 113s
-0.450/1.0M | <k>=8.440 | tri#=    27 | Re(loop)=0.848 | d=1 corr=0.047  acc(rew)=0.188 | 4918 it/s | ETA 112s
-0.460/1.0M | <k>=8.432 | tri#=    24 | Re(loop)=0.900 | d=1 corr=0.141  acc(rew)=0.197 | 4890 it/s | ETA 110s
-0.470/1.0M | <k>=8.440 | tri#=    24 | Re(loop)=0.916 | d=1 corr=-0.022  acc(rew)=0.193 | 4865 it/s | ETA 109s
-0.480/1.0M | <k>=8.404 | tri#=    23 | Re(loop)=0.917 | d=1 corr=0.079  acc(rew)=0.172 | 4839 it/s | ETA 107s
-0.490/1.0M | <k>=8.436 | tri#=    23 | Re(loop)=0.916 | d=1 corr=0.066  acc(rew)=0.188 | 4818 it/s | ETA 106s
-0.500/1.0M | <k>=8.428 | tri#=    23 | Re(loop)=0.896 | d=1 corr=0.017  acc(rew)=0.181 | 4798 it/s | ETA 104s
-0.510/1.0M | <k>=8.440 | tri#=    23 | Re(loop)=0.863 | d=1 corr=0.103  acc(rew)=0.172 | 4775 it/s | ETA 103s
-0.520/1.0M | <k>=8.424 | tri#=    23 | Re(loop)=0.913 | d=1 corr=0.014  acc(rew)=0.190 | 4756 it/s | ETA 101s
-0.530/1.0M | <k>=8.454 | tri#=    21 | Re(loop)=0.944 | d=1 corr=-0.023  acc(rew)=0.176 | 4739 it/s | ETA 99s
-0.540/1.0M | <k>=8.494 | tri#=    25 | Re(loop)=0.915 | d=1 corr=0.114  acc(rew)=0.171 | 4722 it/s | ETA 97s
-0.550/1.0M | <k>=8.466 | tri#=    21 | Re(loop)=0.887 | d=1 corr=0.098  acc(rew)=0.184 | 4704 it/s | ETA 96s
-0.560/1.0M | <k>=8.450 | tri#=    19 | Re(loop)=0.885 | d=1 corr=0.050  acc(rew)=0.168 | 4687 it/s | ETA 94s
-0.570/1.0M | <k>=8.466 | tri#=    24 | Re(loop)=0.846 | d=1 corr=0.150  acc(rew)=0.164 | 4670 it/s | ETA 92s
-0.580/1.0M | <k>=8.458 | tri#=    23 | Re(loop)=0.878 | d=1 corr=0.055  acc(rew)=0.172 | 4654 it/s | ETA 90s
-0.590/1.0M | <k>=8.440 | tri#=    19 | Re(loop)=0.927 | d=1 corr=0.113  acc(rew)=0.173 | 4642 it/s | ETA 88s
-0.600/1.0M | <k>=8.434 | tri#=    19 | Re(loop)=0.907 | d=1 corr=0.023  acc(rew)=0.178 | 4627 it/s | ETA 86s
-0.610/1.0M | <k>=8.460 | tri#=    19 | Re(loop)=0.900 | d=1 corr=-0.008  acc(rew)=0.187 | 4615 it/s | ETA 85s
-0.620/1.0M | <k>=8.460 | tri#=    18 | Re(loop)=0.881 | d=1 corr=0.083  acc(rew)=0.168 | 4603 it/s | ETA 83s
-0.630/1.0M | <k>=8.432 | tri#=    16 | Re(loop)=0.910 | d=1 corr=0.101  acc(rew)=0.178 | 4591 it/s | ETA 81s
-0.640/1.0M | <k>=8.430 | tri#=    16 | Re(loop)=0.882 | d=1 corr=0.105  acc(rew)=0.187 | 4579 it/s | ETA 79s
-0.650/1.0M | <k>=8.442 | tri#=    15 | Re(loop)=0.908 | d=1 corr=0.141  acc(rew)=0.156 | 4569 it/s | ETA 77s
-0.660/1.0M | <k>=8.432 | tri#=    15 | Re(loop)=0.932 | d=1 corr=0.057  acc(rew)=0.188 | 4556 it/s | ETA 75s
-0.670/1.0M | <k>=8.440 | tri#=    14 | Re(loop)=0.946 | d=1 corr=0.020  acc(rew)=0.168 | 4544 it/s | ETA 73s
-0.680/1.0M | <k>=8.462 | tri#=    15 | Re(loop)=0.892 | d=1 corr=0.117  acc(rew)=0.212 | 4531 it/s | ETA 71s
-0.690/1.0M | <k>=8.450 | tri#=    15 | Re(loop)=0.857 | d=1 corr=0.133  acc(rew)=0.162 | 4519 it/s | ETA 69s
-0.700/1.0M | <k>=8.458 | tri#=    12 | Re(loop)=0.877 | d=1 corr=0.040  acc(rew)=0.165 | 4506 it/s | ETA 67s
-0.710/1.0M | <k>=8.476 | tri#=    16 | Re(loop)=0.905 | d=1 corr=0.080  acc(rew)=0.179 | 4496 it/s | ETA 64s
-0.720/1.0M | <k>=8.440 | tri#=    16 | Re(loop)=0.908 | d=1 corr=0.086  acc(rew)=0.177 | 4486 it/s | ETA 62s
-0.730/1.0M | <k>=8.454 | tri#=    15 | Re(loop)=0.904 | d=1 corr=0.074  acc(rew)=0.179 | 4477 it/s | ETA 60s
-0.740/1.0M | <k>=8.436 | tri#=    16 | Re(loop)=0.876 | d=1 corr=0.128  acc(rew)=0.163 | 4468 it/s | ETA 58s
-0.750/1.0M | <k>=8.440 | tri#=    14 | Re(loop)=0.899 | d=1 corr=0.069  acc(rew)=0.183 | 4458 it/s | ETA 56s
-0.760/1.0M | <k>=8.464 | tri#=    10 | Re(loop)=0.839 | d=1 corr=0.031  acc(rew)=0.174 | 4450 it/s | ETA 54s
-0.770/1.0M | <k>=8.452 | tri#=     9 | Re(loop)=0.830 | d=1 corr=0.064  acc(rew)=0.183 | 4441 it/s | ETA 52s
-0.780/1.0M | <k>=8.452 | tri#=    11 | Re(loop)=0.855 | d=1 corr=0.083  acc(rew)=0.151 | 4433 it/s | ETA 50s
-0.790/1.0M | <k>=8.476 | tri#=     9 | Re(loop)=0.890 | d=1 corr=0.024  acc(rew)=0.168 | 4425 it/s | ETA 47s
-0.800/1.0M | <k>=8.514 | tri#=     8 | Re(loop)=0.841 | d=1 corr=0.068  acc(rew)=0.184 | 4417 it/s | ETA 45s
-0.810/1.0M | <k>=8.510 | tri#=    10 | Re(loop)=0.861 | d=1 corr=0.032  acc(rew)=0.203 | 4409 it/s | ETA 43s
-0.820/1.0M | <k>=8.466 | tri#=     9 | Re(loop)=0.849 | d=1 corr=0.121  acc(rew)=0.167 | 4403 it/s | ETA 41s
-0.830/1.0M | <k>=8.472 | tri#=     9 | Re(loop)=0.801 | d=1 corr=0.063  acc(rew)=0.182 | 4396 it/s | ETA 39s
-0.840/1.0M | <k>=8.432 | tri#=     9 | Re(loop)=0.945 | d=1 corr=0.080  acc(rew)=0.196 | 4390 it/s | ETA 36s
-0.850/1.0M | <k>=8.464 | tri#=     9 | Re(loop)=0.923 | d=1 corr=0.019  acc(rew)=0.185 | 4382 it/s | ETA 34s
-0.860/1.0M | <k>=8.464 | tri#=    11 | Re(loop)=0.817 | d=1 corr=0.079  acc(rew)=0.182 | 4376 it/s | ETA 32s
-0.870/1.0M | <k>=8.450 | tri#=    13 | Re(loop)=0.832 | d=1 corr=0.049  acc(rew)=0.186 | 4369 it/s | ETA 30s
-0.880/1.0M | <k>=8.406 | tri#=    15 | Re(loop)=0.863 | d=1 corr=0.150  acc(rew)=0.175 | 4364 it/s | ETA 27s
-0.890/1.0M | <k>=8.388 | tri#=    16 | Re(loop)=0.817 | d=1 corr=0.036  acc(rew)=0.164 | 4359 it/s | ETA 25s
-0.900/1.0M | <k>=8.392 | tri#=    16 | Re(loop)=0.816 | d=1 corr=0.074  acc(rew)=0.185 | 4355 it/s | ETA 23s
-0.910/1.0M | <k>=8.398 | tri#=    12 | Re(loop)=0.792 | d=1 corr=0.094  acc(rew)=0.166 | 4350 it/s | ETA 21s
-0.920/1.0M | <k>=8.436 | tri#=    12 | Re(loop)=0.798 | d=1 corr=0.080  acc(rew)=0.188 | 4344 it/s | ETA 18s
-0.930/1.0M | <k>=8.428 | tri#=    11 | Re(loop)=0.904 | d=1 corr=0.076  acc(rew)=0.178 | 4339 it/s | ETA 16s
-0.940/1.0M | <k>=8.454 | tri#=    11 | Re(loop)=0.877 | d=1 corr=0.083  acc(rew)=0.180 | 4334 it/s | ETA 14s
-0.950/1.0M | <k>=8.406 | tri#=    10 | Re(loop)=0.838 | d=1 corr=0.050  acc(rew)=0.177 | 4329 it/s | ETA 12s
-0.960/1.0M | <k>=8.438 | tri#=     9 | Re(loop)=0.850 | d=1 corr=0.056  acc(rew)=0.166 | 4324 it/s | ETA 9s
-0.970/1.0M | <k>=8.428 | tri#=    11 | Re(loop)=0.953 | d=1 corr=0.059  acc(rew)=0.170 | 4320 it/s | ETA 7s
-0.980/1.0M | <k>=8.438 | tri#=    15 | Re(loop)=0.937 | d=1 corr=0.033  acc(rew)=0.152 | 4315 it/s | ETA 5s
-0.990/1.0M | <k>=8.442 | tri#=    18 | Re(loop)=0.894 | d=1 corr=0.088  acc(rew)=0.165 | 4310 it/s | ETA 2s
-1.000/1.0M | <k>=8.434 | tri#=    16 | Re(loop)=0.866 | d=1 corr=-0.001  acc(rew)=0.198 | 4304 it/s | ETA 0s
+python 5.py -N 400 -s4                                                              ✔  2m 20s   relational_reality  
+>> Output directory created: runs/2026-01-13_11-34-20_N400_S1200000_s4
+>> Starting Simulation Loop...
+0.010/1.20M |  0:00:00 | T7.357e-02 | k0.450 | tri     2 (  +2) [  +2] | Re(loop)0.997 | d=1 corr0.371 |  acc(rew)0.087 | 35281 sps | ETA 0:00:33
+0.020/1.20M |  0:00:00 | T2.706e-02 | k0.860 | tri    16 ( +14) [ +12] | Re(loop)0.997 | d=1 corr0.391 |  acc(rew)0.084 | 32513 sps | ETA 0:00:36
+0.030/1.20M |  0:00:00 | T9.956e-03 | k1.325 | tri    37 ( +21) [  +7] | Re(loop)0.998 | d=1 corr0.304 |  acc(rew)0.094 | 30143 sps | ETA 0:00:38
+0.040/1.20M |  0:00:01 | T3.662e-03 | k1.950 | tri    79 ( +42) [ +21] | Re(loop)0.995 | d=1 corr0.310 |  acc(rew)0.123 | 27957 sps | ETA 0:00:41
+0.050/1.20M |  0:00:01 | T1.347e-03 | k2.525 | tri   123 ( +44) [  +2] | Re(loop)0.996 | d=1 corr0.260 |  acc(rew)0.112 | 26315 sps | ETA 0:00:43
+0.060/1.20M |  0:00:02 | T4.956e-04 | k3.090 | tri   164 ( +41) [  -3] | Re(loop)0.998 | d=1 corr0.268 |  acc(rew)0.113 | 24826 sps | ETA 0:00:45
+0.070/1.20M |  0:00:02 | T1.823e-04 | k3.760 | tri   231 ( +67) [ +26] | Re(loop)0.998 | d=1 corr0.331 |  acc(rew)0.136 | 23424 sps | ETA 0:00:48
+0.080/1.20M |  0:00:03 | T6.707e-05 | k4.460 | tri   298 ( +67) [  +0] | Re(loop)0.999 | d=1 corr0.278 |  acc(rew)0.146 | 22210 sps | ETA 0:00:50
+0.090/1.20M |  0:00:04 | T2.467e-05 | k5.155 | tri   352 ( +54) [ -13] | Re(loop)0.999 | d=1 corr0.243 |  acc(rew)0.136 | 21099 sps | ETA 0:00:52
+0.100/1.20M |  0:00:05 | T9.075e-06 | k5.830 | tri   410 ( +58) [  +4] | Re(loop)0.998 | d=1 corr0.337 |  acc(rew)0.136 | 19980 sps | ETA 0:00:55
+0.110/1.20M |  0:00:05 | T3.339e-06 | k6.440 | tri   467 ( +57) [  -1] | Re(loop)0.999 | d=1 corr0.316 |  acc(rew)0.143 | 19062 sps | ETA 0:00:57
+0.120/1.20M |  0:00:06 | T1.228e-06 | k7.025 | tri   515 ( +48) [  -9] | Re(loop)0.999 | d=1 corr0.264 |  acc(rew)0.130 | 18259 sps | ETA 0:00:59
+0.130/1.20M |  0:00:07 | T4.518e-07 | k7.480 | tri   547 ( +32) [ -16] | Re(loop)0.999 | d=1 corr0.310 |  acc(rew)0.107 | 17506 sps | ETA 0:01:01
+0.140/1.20M |  0:00:08 | T1.662e-07 | k8.070 | tri   582 ( +35) [  +3] | Re(loop)1.000 | d=1 corr0.355 |  acc(rew)0.129 | 16832 sps | ETA 0:01:02
+0.150/1.20M |  0:00:09 | T6.113e-08 | k8.585 | tri   618 ( +36) [  +1] | Re(loop)0.999 | d=1 corr0.366 |  acc(rew)0.121 | 16208 sps | ETA 0:01:04
+0.160/1.20M |  0:00:10 | T2.249e-08 | k9.030 | tri   641 ( +23) [ -13] | Re(loop)1.000 | d=1 corr0.378 |  acc(rew)0.110 | 15658 sps | ETA 0:01:06
+0.170/1.20M |  0:00:11 | T8.273e-09 | k9.380 | tri   653 ( +12) [ -11] | Re(loop)1.000 | d=1 corr0.269 |  acc(rew)0.107 | 15174 sps | ETA 0:01:07
+0.180/1.20M |  0:00:12 | T3.043e-09 | k9.760 | tri   669 ( +16) [  +4] | Re(loop)1.000 | d=1 corr0.364 |  acc(rew)0.102 | 14698 sps | ETA 0:01:09
+0.190/1.20M |  0:00:13 | T1.119e-09 | k10.080 | tri   671 (  +2) [ -14] | Re(loop)1.000 | d=1 corr0.307 |  acc(rew)0.109 | 14243 sps | ETA 0:01:10
+0.200/1.20M |  0:00:14 | T4.118e-10 | k10.330 | tri   677 (  +6) [  +4] | Re(loop)0.999 | d=1 corr0.305 |  acc(rew)0.075 | 13864 sps | ETA 0:01:12
+0.210/1.20M |  0:00:15 | T1.515e-10 | k10.595 | tri   672 (  -5) [ -11] | Re(loop)0.999 | d=1 corr0.329 |  acc(rew)0.108 | 13483 sps | ETA 0:01:13
+0.220/1.20M |  0:00:16 | T5.573e-11 | k10.760 | tri   653 ( -19) [ -14] | Re(loop)0.999 | d=1 corr0.411 |  acc(rew)0.080 | 13153 sps | ETA 0:01:14
+0.230/1.20M |  0:00:17 | T2.050e-11 | k10.930 | tri   647 (  -6) [ +13] | Re(loop)1.000 | d=1 corr0.284 |  acc(rew)0.075 | 12880 sps | ETA 0:01:15
+0.240/1.20M |  0:00:18 | T7.541e-12 | k11.095 | tri   634 ( -13) [  -7] | Re(loop)1.000 | d=1 corr0.360 |  acc(rew)0.082 | 12644 sps | ETA 0:01:15
+0.250/1.20M |  0:00:20 | T2.774e-12 | k11.280 | tri   620 ( -14) [  -1] | Re(loop)1.000 | d=1 corr0.407 |  acc(rew)0.068 | 12427 sps | ETA 0:01:16
+0.260/1.20M |  0:00:21 | T1.020e-12 | k11.400 | tri   611 (  -9) [  +5] | Re(loop)1.000 | d=1 corr0.322 |  acc(rew)0.052 | 12223 sps | ETA 0:01:16
+0.270/1.20M |  0:00:22 | T3.754e-13 | k11.555 | tri   615 (  +4) [ +13] | Re(loop)1.000 | d=1 corr0.390 |  acc(rew)0.070 | 12043 sps | ETA 0:01:17
+0.280/1.20M |  0:00:23 | T1.381e-13 | k11.575 | tri   588 ( -27) [ -31] | Re(loop)1.000 | d=1 corr0.371 |  acc(rew)0.074 | 11863 sps | ETA 0:01:17
+0.290/1.20M |  0:00:24 | T5.080e-14 | k11.690 | tri   589 (  +1) [ +28] | Re(loop)1.000 | d=1 corr0.415 |  acc(rew)0.053 | 11711 sps | ETA 0:01:17
+0.300/1.20M |  0:00:25 | T1.869e-14 | k11.730 | tri   575 ( -14) [ -15] | Re(loop)1.000 | d=1 corr0.394 |  acc(rew)0.044 | 11561 sps | ETA 0:01:17
+0.310/1.20M |  0:00:27 | T6.874e-15 | k11.835 | tri   579 (  +4) [ +18] | Re(loop)1.000 | d=1 corr0.411 |  acc(rew)0.046 | 11415 sps | ETA 0:01:17
+0.320/1.20M |  0:00:28 | T2.529e-15 | k11.880 | tri   574 (  -5) [  -9] | Re(loop)1.000 | d=1 corr0.465 |  acc(rew)0.032 | 11278 sps | ETA 0:01:18
+0.330/1.20M |  0:00:29 | T9.302e-16 | k11.975 | tri   568 (  -6) [  -1] | Re(loop)1.000 | d=1 corr0.468 |  acc(rew)0.043 | 11157 sps | ETA 0:01:17
+0.340/1.20M |  0:00:30 | T3.422e-16 | k12.010 | tri   564 (  -4) [  +2] | Re(loop)1.000 | d=1 corr0.456 |  acc(rew)0.031 | 11045 sps | ETA 0:01:17
+0.350/1.20M |  0:00:31 | T1.259e-16 | k12.055 | tri   562 (  -2) [  +2] | Re(loop)1.000 | d=1 corr0.541 |  acc(rew)0.028 | 10944 sps | ETA 0:01:17
+0.360/1.20M |  0:00:33 | T4.631e-17 | k12.080 | tri   555 (  -7) [  -5] | Re(loop)1.000 | d=1 corr0.516 |  acc(rew)0.030 | 10847 sps | ETA 0:01:17
+0.370/1.20M |  0:00:34 | T1.703e-17 | k12.120 | tri   552 (  -3) [  +4] | Re(loop)1.000 | d=1 corr0.496 |  acc(rew)0.022 | 10757 sps | ETA 0:01:17
+0.380/1.20M |  0:00:35 | T6.266e-18 | k12.110 | tri   539 ( -13) [ -10] | Re(loop)1.000 | d=1 corr0.487 |  acc(rew)0.025 | 10671 sps | ETA 0:01:16
+0.390/1.20M |  0:00:36 | T2.305e-18 | k12.135 | tri   538 (  -1) [ +12] | Re(loop)1.000 | d=1 corr0.523 |  acc(rew)0.018 | 10589 sps | ETA 0:01:16
+0.400/1.20M |  0:00:38 | T8.480e-19 | k12.165 | tri   533 (  -5) [  -4] | Re(loop)1.000 | d=1 corr0.412 |  acc(rew)0.027 | 10518 sps | ETA 0:01:16
+0.410/1.20M |  0:00:39 | T3.119e-19 | k12.175 | tri   530 (  -3) [  +2] | Re(loop)1.000 | d=1 corr0.520 |  acc(rew)0.016 | 10456 sps | ETA 0:01:15
+0.420/1.20M |  0:00:40 | T1.147e-19 | k12.175 | tri   525 (  -5) [  -2] | Re(loop)1.000 | d=1 corr0.565 |  acc(rew)0.010 | 10394 sps | ETA 0:01:15
+0.430/1.20M |  0:00:41 | T4.221e-20 | k12.185 | tri   524 (  -1) [  +4] | Re(loop)1.000 | d=1 corr0.572 |  acc(rew)0.004 | 10327 sps | ETA 0:01:14
+0.440/1.20M |  0:00:42 | T1.553e-20 | k12.175 | tri   520 (  -4) [  -3] | Re(loop)1.000 | d=1 corr0.633 |  acc(rew)0.008 | 10267 sps | ETA 0:01:14
+0.450/1.20M |  0:00:44 | T5.712e-21 | k12.170 | tri   518 (  -2) [  +2] | Re(loop)1.000 | d=1 corr0.555 |  acc(rew)0.005 | 10217 sps | ETA 0:01:13
+0.460/1.20M |  0:00:45 | T2.101e-21 | k12.165 | tri   518 (  +0) [  +2] | Re(loop)1.000 | d=1 corr0.543 |  acc(rew)0.001 | 10164 sps | ETA 0:01:12
+0.470/1.20M |  0:00:46 | T7.730e-22 | k12.160 | tri   517 (  -1) [  -1] | Re(loop)1.000 | d=1 corr0.609 |  acc(rew)0.003 | 10115 sps | ETA 0:01:12
+0.480/1.20M |  0:00:47 | T2.843e-22 | k12.160 | tri   514 (  -3) [  -2] | Re(loop)1.000 | d=1 corr0.546 |  acc(rew)0.004 | 10071 sps | ETA 0:01:11
+0.490/1.20M |  0:00:48 | T1.046e-22 | k12.155 | tri   512 (  -2) [  +1] | Re(loop)1.000 | d=1 corr0.575 |  acc(rew)0.003 | 10021 sps | ETA 0:01:10
+0.500/1.20M |  0:00:50 | T3.848e-23 | k12.145 | tri   510 (  -2) [  +0] | Re(loop)1.000 | d=1 corr0.609 |  acc(rew)0.004 | 9977 sps | ETA 0:01:10
+0.510/1.20M |  0:00:51 | T1.415e-23 | k12.140 | tri   510 (  +0) [  +2] | Re(loop)1.000 | d=1 corr0.644 |  acc(rew)0.001 | 9934 sps | ETA 0:01:09
+0.520/1.20M |  0:00:52 | T5.207e-24 | k12.140 | tri   510 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.655 |  acc(rew)0.002 | 9896 sps | ETA 0:01:08
+0.530/1.20M |  0:00:53 | T1.915e-24 | k12.135 | tri   510 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.626 |  acc(rew)0.001 | 9859 sps | ETA 0:01:07
+0.540/1.20M |  0:00:54 | T7.046e-25 | k12.135 | tri   510 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.556 |  acc(rew)0.000 | 9824 sps | ETA 0:01:07
+0.550/1.20M |  0:00:56 | T2.592e-25 | k12.125 | tri   509 (  -1) [  -1] | Re(loop)1.000 | d=1 corr0.637 |  acc(rew)0.002 | 9783 sps | ETA 0:01:06
+0.560/1.20M |  0:00:57 | T9.535e-26 | k12.120 | tri   508 (  -1) [  +0] | Re(loop)1.000 | d=1 corr0.546 |  acc(rew)0.001 | 9751 sps | ETA 0:01:05
+0.570/1.20M |  0:00:58 | T3.508e-26 | k12.110 | tri   506 (  -2) [  -1] | Re(loop)1.000 | d=1 corr0.554 |  acc(rew)0.004 | 9720 sps | ETA 0:01:04
+0.580/1.20M |  0:00:59 | T1.290e-26 | k12.110 | tri   506 (  +0) [  +2] | Re(loop)1.000 | d=1 corr0.599 |  acc(rew)0.000 | 9687 sps | ETA 0:01:04
+0.590/1.20M |  0:01:01 | T4.747e-27 | k12.100 | tri   505 (  -1) [  -1] | Re(loop)1.000 | d=1 corr0.605 |  acc(rew)0.002 | 9658 sps | ETA 0:01:03
+0.600/1.20M |  0:01:02 | T1.746e-27 | k12.095 | tri   505 (  +0) [  +1] | Re(loop)1.000 | d=1 corr0.604 |  acc(rew)0.001 | 9630 sps | ETA 0:01:02
+0.610/1.20M |  0:01:03 | T6.423e-28 | k12.090 | tri   503 (  -2) [  -2] | Re(loop)1.000 | d=1 corr0.657 |  acc(rew)0.001 | 9599 sps | ETA 0:01:01
+0.620/1.20M |  0:01:04 | T2.363e-28 | k12.090 | tri   503 (  +0) [  +2] | Re(loop)1.000 | d=1 corr0.610 |  acc(rew)0.000 | 9571 sps | ETA 0:01:00
+0.630/1.20M |  0:01:05 | T8.692e-29 | k12.085 | tri   503 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.595 |  acc(rew)0.001 | 9548 sps | ETA 0:00:59
+0.640/1.20M |  0:01:07 | T3.197e-29 | k12.085 | tri   503 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.629 |  acc(rew)0.000 | 9526 sps | ETA 0:00:58
+0.650/1.20M |  0:01:08 | T1.176e-29 | k12.080 | tri   502 (  -1) [  -1] | Re(loop)1.000 | d=1 corr0.650 |  acc(rew)0.001 | 9505 sps | ETA 0:00:57
+0.660/1.20M |  0:01:09 | T4.327e-30 | k12.080 | tri   502 (  +0) [  +1] | Re(loop)1.000 | d=1 corr0.636 |  acc(rew)0.000 | 9483 sps | ETA 0:00:56
+0.670/1.20M |  0:01:10 | T1.592e-30 | k12.075 | tri   502 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.646 |  acc(rew)0.001 | 9461 sps | ETA 0:00:56
+0.680/1.20M |  0:01:12 | T5.855e-31 | k12.075 | tri   502 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.624 |  acc(rew)0.000 | 9441 sps | ETA 0:00:55
+0.690/1.20M |  0:01:13 | T2.154e-31 | k12.075 | tri   502 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.545 |  acc(rew)0.000 | 9420 sps | ETA 0:00:54
+0.700/1.20M |  0:01:14 | T7.923e-32 | k12.070 | tri   501 (  -1) [  -1] | Re(loop)1.000 | d=1 corr0.536 |  acc(rew)0.001 | 9399 sps | ETA 0:00:53
+0.710/1.20M |  0:01:15 | T2.915e-32 | k12.070 | tri   501 (  +0) [  +1] | Re(loop)1.000 | d=1 corr0.662 |  acc(rew)0.000 | 9381 sps | ETA 0:00:52
+0.720/1.20M |  0:01:16 | T1.072e-32 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.595 |  acc(rew)0.000 | 9363 sps | ETA 0:00:51
+0.730/1.20M |  0:01:18 | T3.944e-33 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.633 |  acc(rew)0.000 | 9347 sps | ETA 0:00:50
+0.740/1.20M |  0:01:19 | T1.451e-33 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.613 |  acc(rew)0.000 | 9333 sps | ETA 0:00:49
+0.750/1.20M |  0:01:20 | T5.337e-34 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.616 |  acc(rew)0.000 | 9317 sps | ETA 0:00:48
+0.760/1.20M |  0:01:21 | T1.963e-34 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.583 |  acc(rew)0.000 | 9302 sps | ETA 0:00:47
+0.770/1.20M |  0:01:22 | T7.222e-35 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.593 |  acc(rew)0.000 | 9286 sps | ETA 0:00:46
+0.780/1.20M |  0:01:24 | T2.657e-35 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.605 |  acc(rew)0.000 | 9270 sps | ETA 0:00:45
+0.790/1.20M |  0:01:25 | T9.774e-36 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.635 |  acc(rew)0.000 | 9254 sps | ETA 0:00:44
+0.800/1.20M |  0:01:26 | T3.595e-36 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.656 |  acc(rew)0.000 | 9238 sps | ETA 0:00:43
+0.810/1.20M |  0:01:27 | T1.323e-36 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.556 |  acc(rew)0.000 | 9225 sps | ETA 0:00:42
+0.820/1.20M |  0:01:28 | T4.865e-37 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.617 |  acc(rew)0.000 | 9214 sps | ETA 0:00:41
+0.830/1.20M |  0:01:30 | T1.790e-37 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.643 |  acc(rew)0.000 | 9201 sps | ETA 0:00:40
+0.840/1.20M |  0:01:31 | T6.584e-38 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.674 |  acc(rew)0.000 | 9187 sps | ETA 0:00:39
+0.850/1.20M |  0:01:32 | T2.422e-38 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.613 |  acc(rew)0.000 | 9174 sps | ETA 0:00:38
+0.860/1.20M |  0:01:33 | T8.909e-39 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.613 |  acc(rew)0.000 | 9162 sps | ETA 0:00:37
+0.870/1.20M |  0:01:35 | T3.277e-39 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.575 |  acc(rew)0.000 | 9150 sps | ETA 0:00:36
+0.880/1.20M |  0:01:36 | T1.206e-39 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.590 |  acc(rew)0.000 | 9138 sps | ETA 0:00:35
+0.890/1.20M |  0:01:37 | T4.435e-40 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.631 |  acc(rew)0.000 | 9127 sps | ETA 0:00:33
+0.900/1.20M |  0:01:38 | T1.631e-40 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.618 |  acc(rew)0.000 | 9117 sps | ETA 0:00:32
+0.910/1.20M |  0:01:39 | T6.001e-41 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.616 |  acc(rew)0.000 | 9107 sps | ETA 0:00:31
+0.920/1.20M |  0:01:41 | T2.208e-41 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.624 |  acc(rew)0.000 | 9097 sps | ETA 0:00:30
+0.930/1.20M |  0:01:42 | T8.121e-42 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.576 |  acc(rew)0.000 | 9088 sps | ETA 0:00:29
+0.940/1.20M |  0:01:43 | T2.987e-42 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.655 |  acc(rew)0.000 | 9077 sps | ETA 0:00:28
+0.950/1.20M |  0:01:44 | T1.099e-42 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.579 |  acc(rew)0.000 | 9067 sps | ETA 0:00:27
+0.960/1.20M |  0:01:45 | T4.043e-43 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.616 |  acc(rew)0.000 | 9058 sps | ETA 0:00:26
+0.970/1.20M |  0:01:47 | T1.487e-43 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.663 |  acc(rew)0.000 | 9050 sps | ETA 0:00:25
+0.980/1.20M |  0:01:48 | T5.471e-44 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.665 |  acc(rew)0.000 | 9038 sps | ETA 0:00:24
+0.990/1.20M |  0:01:49 | T2.012e-44 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.619 |  acc(rew)0.000 | 9029 sps | ETA 0:00:23
+1.000/1.20M |  0:01:50 | T7.403e-45 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.525 |  acc(rew)0.000 | 9019 sps | ETA 0:00:22
+1.010/1.20M |  0:01:52 | T2.723e-45 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.624 |  acc(rew)0.000 | 9010 sps | ETA 0:00:21
+1.020/1.20M |  0:01:53 | T1.002e-45 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.595 |  acc(rew)0.000 | 9003 sps | ETA 0:00:19
+1.030/1.20M |  0:01:54 | T3.685e-46 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.592 |  acc(rew)0.000 | 8995 sps | ETA 0:00:18
+1.040/1.20M |  0:01:55 | T1.356e-46 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.621 |  acc(rew)0.000 | 8987 sps | ETA 0:00:17
+1.050/1.20M |  0:01:56 | T4.987e-47 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.614 |  acc(rew)0.000 | 8979 sps | ETA 0:00:16
+1.060/1.20M |  0:01:58 | T1.834e-47 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.550 |  acc(rew)0.000 | 8972 sps | ETA 0:00:15
+1.070/1.20M |  0:01:59 | T6.748e-48 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.585 |  acc(rew)0.000 | 8964 sps | ETA 0:00:14
+1.080/1.20M |  0:02:00 | T2.482e-48 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.620 |  acc(rew)0.000 | 8957 sps | ETA 0:00:13
+1.090/1.20M |  0:02:01 | T9.132e-49 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.587 |  acc(rew)0.000 | 8951 sps | ETA 0:00:12
+1.100/1.20M |  0:02:02 | T3.359e-49 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.651 |  acc(rew)0.000 | 8944 sps | ETA 0:00:11
+1.110/1.20M |  0:02:04 | T1.236e-49 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.569 |  acc(rew)0.000 | 8937 sps | ETA 0:00:10
+1.120/1.20M |  0:02:05 | T4.546e-50 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.631 |  acc(rew)0.000 | 8930 sps | ETA 0:00:08
+1.130/1.20M |  0:02:06 | T1.672e-50 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.614 |  acc(rew)0.000 | 8924 sps | ETA 0:00:07
+1.140/1.20M |  0:02:07 | T6.152e-51 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.655 |  acc(rew)0.000 | 8919 sps | ETA 0:00:06
+1.150/1.20M |  0:02:09 | T2.263e-51 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.624 |  acc(rew)0.000 | 8912 sps | ETA 0:00:05
+1.160/1.20M |  0:02:10 | T8.324e-52 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.570 |  acc(rew)0.000 | 8905 sps | ETA 0:00:04
+1.170/1.20M |  0:02:11 | T3.062e-52 | k12.070 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.555 |  acc(rew)0.000 | 8899 sps | ETA 0:00:03
+1.180/1.20M |  0:02:12 | T1.126e-52 | k12.065 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.586 |  acc(rew)0.001 | 8893 sps | ETA 0:00:02
+1.190/1.20M |  0:02:13 | T4.144e-53 | k12.065 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.604 |  acc(rew)0.000 | 8886 sps | ETA 0:00:01
+1.200/1.20M |  0:02:15 | T1.524e-53 | k12.065 | tri   501 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.569 |  acc(rew)0.000 | 8880 sps | ETA 0:00:00
 >> Equilibration done.
->> triangle count (exact): 16
+>> triangle count (exact): 501
 >> Gauge invariance check...
-  gauge: max |Δ loop| = 4.441e-16
-  gauge: max |Δ corr Re| = 1.776e-15 | max |Δ corr Im| = 1.554e-15
+  gauge: max |Δ loop| = 3.331e-16
+  gauge: max |Δ corr Re| = 1.874e-15 | max |Δ corr Im| = 1.346e-15
 >> Correlator vs hop distance...
->> Quench response (Δρ vs Δcurv) [Running on Copy]...
-   quench r(Δρ,Δcurv) ≈ -0.495
+>> Quench response (Δρ vs Δcurv) ...
+   quench r(Δρ,Δcurv) ≈ 0.795
 >> Light cone (geometry frozen)...
-   front fit q=0.80: linear SSE=143, sqrt SSE=166
+   front fit q=0.80: linear SSE=0, sqrt SSE=0
 >> Summary:
-   <k>=8.43 | λE_total=-2.500 
-   backreaction r(ρ,curv) ≈ 0.072
-   xi ≈ nan hops
-   triangles = 16
->> Calculacting general relativity.. .
->> Calculating Einstein Geometry (Ollivier-Ricci)...
-----------------------------------------
-RESULTS:
-Slope (Gravitational Coupling G): 0.0382
-Intercept (Cosmological Constant): -1.0898
-----------------------------------------
+   <k>=12.06 | λE_total=-0.500 
+   backreaction r(ρ,curv) ≈ -0.029
+   xi ≈ 6.186 hops
+   triangles = 501
+>> Calculating Einstein Geometry (Standard Ollivier-Ricci, alpha=0.5)...
+Slope (Gravitational Coupling G): 7.7976
+Intercept (Cosmological Constant): -0.2976
 >> Calculacting dimensionality.. .
+Hausdorff:1.79
+Spectral: 0.80
 >> Calculating geometry.. .
->> Finished, find all data in folder: runs/2026-01-10_14-09-29_N1000_S1000000_s1
+>> Finished, find all data in folder: runs/2026-01-13_11-34-20_N400_S1200000_s4
