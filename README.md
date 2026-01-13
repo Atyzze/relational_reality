@@ -100,7 +100,7 @@ looks like most of our universe is already infected by them, I mean, they are li
 
 <img width="4682" height="2367" alt="N=6400_S=200000_m" src="https://github.com/user-attachments/assets/7c96d723-cb29-4371-b0a7-e6d229742c5d" />
 
-uh oh, what's this, a virus? a ball with many tiny strings, hmmmmm, but not quite hair like, too sparse, octopus? how many arms?? or perhaps a purple star with some unusually big solar flare-y appendages
+from a 2d disk like looking thing, a circle, to ... sphere! a new dimension unlocked, from 2 to 3, just like how we went from 0 to 1 and already set the trend
 
 <img width="4690" height="2367" alt="N=6400_S=400000_m" src="https://github.com/user-attachments/assets/9ad03c18-d056-42b8-9197-ed97b5be0b70" />
 
@@ -170,3 +170,18 @@ I see G going up, let's stabilize her, couple G to N count to match our own univ
 
 almost there! .. .
 
+so, then, how many dimensions do we have in our world? 3? nah, time is definitely one, so 4! growing into 5 over time as the crystal evolves? :)
+
+I asked an LLM, where this model could be applied, apparently, many places, but I personally seem to be drawn towards finer tuning this new instrument first
+
+next up, probably something with hair management, self organizing nano bots that attack a specific set of hair cells only, and remain inert in all other conditions
+
+I don't like having to shave, thus, can we localize it to maintain head/face/everything-above the neck? how do we target those areas only?
+
+many more things left to explore, seem to be drawn to the medical world, protein folding, how 3d molecules spontanously fold into actual functional components vital to most of known life?
+
+and this part was luckily already solved by the AI community, it seemed kinda important and vital for all things medicinal such as better drug design
+
+less side effects
+
+anyway, back to gravity her pull for now, this chair, ugh, I really need a replacement, but it lasted me over a decade at this point I think and I want something that it is at least as durable and that quickly becomes expensive sadly
