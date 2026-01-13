@@ -187,3 +187,19 @@ and this part was luckily already solved by the AI community, it seemed kinda im
 less side effects
 
 anyway, back to gravity her pull for now, this chair, ugh, I really need a replacement, but it lasted me over a decade at this point I think and I want something that it is at least as durable and that quickly becomes expensive sadly
+
+hm, or maybe G was just having a tiny wiggle, lets run multiple seeds at lower N counts to lock in multiple data points for each scaling factor, was it just fluke? a lot of crazy things can happen in a melting multidimensional crystal :)
+
+we see gravity go negative over time, that actually, might be a value that corresponds to its phase shift from initial triangle explosion to later self stabilizing patterns, gravity itself, being fully dynamic according to the universe her current stage
+
+how black holy is she feeling today? depends on where you are in spacetime, doesn't it? so much left to explore, experienttally alone, it'll make for the most amazing things, surfing the black holes as closely as we can, while still maintaining communication with the outside world
+
+and worm holes? must be possible, just a matter of finding them, and they don't have to be in space out there, imagine all of reality being like a super complex big block of cheese, with many holes in it, actually wait, this analogy doesn't work that well
+
+spiders and webs, that, works much better, geometry being naturally multi dimensional, not bound to our 3d or 4d notionss, 5d+ and only really limited by our own _imaginations_ & dreams
+
+effectively, ley lines have a scientficic basis to them, in sheer principle alone, theyre probably, not straight lines through earth, but who knows, maybe there's some relations to our Earth her own unique EM field vibrations, next to the Sun, moon, all the big objects might literally have a sort of 'soul' to them in that they directly shape and alter our effective experienced reality, drastically. The sun is our God. We all depend on her, for now, and she's enslaved us into thinking it isn't possible or feasible to escape her gravity.
+
+Yet, we already have our own man made probes flying in between the stars, barely left our edge really, now it's just a long long time of mostly nothingness, no other stars or planets, nothing, for a looooooong time
+
+We should be able to build a ship that makes it there anyway, not due to traveling faster than light, but through having succeeded in having build a self sustaining spaceship with the only input needed being enough watter and asteroid mineral mining for all the needed internal energy book keeping. Then, we, as a species, can set sails again, to new worlds, where the exploration itself is almost the point of it all. And find that, there are other societies, who've already made the journey, and you're, technically, already on such a ship, and we call it Earth but yes you may explore the boundaries of your base ship as your heart desires.
