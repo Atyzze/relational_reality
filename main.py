@@ -13,42 +13,42 @@ from datetime import timedelta
 SEED = 1                        #seeds allow for reproducable results while also letting you infinitely long spin the RNG wheel
 random.seed(SEED)
 np.random.seed(SEED)
-N = 400
+N = 100                         #start low to test your hardware and see if all the tests pass without error in reasonble time
 stepToNRatio = 3000             #this will by default get you to the final triangle count, running more compute steps makes no difference anymore
 STEP_COUNT  = N*stepToNRatio    #how many compute cycles you want to iterate your universe into its future
 LOG_EVERY   = 10_000            #how often you want your universe to report back to you, taking a peek in its inner procesSs
 VISUALIZE_STEPS = False         #if set to true, every LOG_EVERY step count will also draw spring & mds layout (this is extremely compute heavy!, MDS projection scales o(n3)) and will take potentially decades depending the exact parameters above, if you log every single step ...)
 VISUALIZE_ALL_NODES = True      #if set to false, disconnected nodes when drawing the spring/mds layout will not be drawn, thus effectively remaining zoomed in on the currently biggest manifold in your evolving universe
 
-# Move mix, never changed any of these parameters in this sectopm for the entire sim exploration
-P_PSI    = 0.55 #righ, those, what were those again, this looks like a distribution over 1 on first sight, code might break if their sum is different than 1, could try and test data but, there's so many other things to try as well then this
-P_THETA  = 0.35 #focus, where?!
-P_REWIRE = 0.10 #rewire, beep boop, .. where? there! somewhere novel (probably, or maybe not?)
+# Move mix, never changed any of these parameters in this section for the entire sim exploration
+P_PSI    = 0.55                 #righ, those, what were those again, this looks like a distribution over 1 on first sight, code might break if their sum is different than 1, could try and test data but, there's so many other things to try as well then this
+P_THETA  = 0.35                 #focus, where?!
+P_REWIRE = 0.10                 #rewire, beep boop, .. where? there! somewhere novel (probably, or maybe not?)
 
 # Temperature + steps
-TEMP       = 0.20 #cheez, so much code left to document still (this is the universe starting temp)
-TEMP_SCALE_DOWN_FACTOR = 0.9999
-PSI_STEP   = 0.25 #yo, what, there's that PSI again, psiiiii, no, psyyyyy feels better, psssssyyyyyyycccchhhhhheee.. Ellesdee tribute.
-THETA_STEP = 0.35 #no step
-
+TEMP       = 0.20               #cheez, so much code left to document still (this is the universe starting temp)
+TEMP_SCALE_DOWN_FACTOR = 0.9999 #slowly cool it down, keep cool down rate constant
+PSI_STEP   = 0.25               #yo, what, there's that PSI again, psiiiii, no, psyyyyy feels better, psssssyyyyyyycccchhhhhheee.. Ellesdee tribute.
+THETA_STEP = 0.35               #no step!
+!
 # Action parameters / geometry / degree costs
-LAMBDA_E_BASE = -0.50 #under investigation, is this the best knob to play with first?
-LAMBDA_G      = 0.60  #or maybe this one?
-LAMBDA_PSI    = 0.08  #psi? wait, what?
-KAPPA         = 0.90  #wood? eh?
-BETA          = 3.50  #ehhh, alpha, meta?
-MASS2         = 0.35  #yo mamma so fat she needs a 2 behind her mass, wait no .. this stops making sense, or well, depends on the observer I guess? could probably ask an AI to turn this into some kind of joke
+LAMBDA_E_BASE = -0.50           #under investigation, is this the best knob to play with first?
+LAMBDA_G      = 0.60            #or maybe this one?
+LAMBDA_PSI    = 0.08            #psi? wait, what?
+KAPPA         = 0.90            #wood? eh?
+BETA          = 3.50            #ehhh, alpha, meta?
+MASS2         = 0.35            #yo mamma so fat she needs a 2 behind her mass, wait no .. this stops making sense, or well, depends on the observer I guess? could probably ask an AI to turn this into some kind of joke
 
-LAMBDA_PAULI  = 0.05 #pauli, my dear, ahhh, mmm names, still investigating if I can strip out this parameter as well, to further reduce complexity, down to its absolute bare minimum that still reproduces the same evolution
-RHO0          = 4.0  #what was this again? still need to fiddle with thiss one to detect what it does and if we can do without it
-MU_DEG2       = 0.01 #this one is ... ehh, be careful changing this value even a little bit, it'll wreck your entire universe quickly if you stray too far from this baseline
+LAMBDA_PAULI  = 0.05            #pauli, my dear, ahhh, mmm names, still investigating if I can strip out this parameter as well, to further reduce complexity, down to its absolute bare minimum that still reproduces the same evolution
+RHO0          = 4.0             #what was this again? still need to fiddle with thiss one to detect what it does and if we can do without it
+MU_DEG2       = 0.01            #this one is ... ehh, be careful changing this value even a little bit, it'll wreck your entire universe quickly if you stray too far from this baseline
 
 # Rewire proposal mix
-USE_TRIADIC_TOGGLE = True #so many variables to investigate still!
-P_TRIADIC_TOGGLE   = 0.85 #a work in progress
+USE_TRIADIC_TOGGLE = True       #so many variables to investigate still!
+P_TRIADIC_TOGGLE   = 0.85       #a work in progress
 
 #parameters below are solely for diagnostics and dont affect the actual graph evolution
-START_TEMP = TEMP #a variable with a single purpose, remember our starting temperature before we start letting it cool down over time
+START_TEMP = TEMP               #a variable with a single purpose, remember our starting temperature before we start letting it cool down over time
 max_tri_count = 0
 
 # Correlator
@@ -59,7 +59,7 @@ CORR_MIN_SHELL = 5
 AVG_K_SHORTEST_PATHS = 1
 
 # Light cone
-PROPAGATE_MOVES  = 10_000 #definitely exploring this one more in the future, light speed and all, why c, why not c++?
+PROPAGATE_MOVES  = 10_000       #definitely exploring this one more in the future, light speed and all, why c, why not c++?
 PERTURB_EPS      = 1.5
 MAX_DIST_LIGHTCONE = 10
 FRONT_Q            = 0.80
@@ -1093,7 +1093,7 @@ def plot_emergent_geometry(G: nx.Graph, step):
     plt.colorbar(sc, ax=axs[1], label="Matter Density ρ=|psi|²")
     axs[1].set_title("MDS Projection: The Emergent Manifold")
     axs[1].axis("off")
-    fig.suptitle( f"Relational Reality | N={N} | S={STEP_COUNT}", fontsize=12,)
+    fig.suptitle( f"Relational Reality | N={N} | S={step}", fontsize=12,)
     plt.tight_layout()
     plt.savefig(FRAMES_DIR + "/N="+str(N)+"_S="+str(step) + "_m.png", dpi=300, bbox_inches="tight")
     plt.close()
@@ -1117,7 +1117,7 @@ if __name__ == "__main__":
     os.makedirs(FRAMES_DIR, exist_ok=True)
     shutil.copy2(__file__, FRAMES_DIR)
     print(f">> Output directory created: {FRAMES_DIR}")
-    #am not bothering to provide support for windows, the users but have to flip a single slash to make it all work with many digital tiny universsal pythons sSneks—~𓆙𓂀
+    #am not bothering to provide support for windows, the users but have to flip a single slash to make it all work with many digital tiny universsal pythonssSneks—~𓆙𓂀
     G = run()
     plot_general_relativity_check(G)
     print(f">> Calculacting dimensionality.. .")
