@@ -266,11 +266,11 @@ which one will have gotten it closest? ;)
 
 zZz
 
-slope definitely confirmed, gathering more data points takes quite a while for graphs below, will update periodically, our 
+slope definitely confirmed, gathering more data points takes quite a while for graphs below, will update periodically
 
 <img width="3033" height="1948" alt="gravity_G_scaling" src="https://github.com/user-attachments/assets/bddc9694-8928-4c7e-8c73-c234a94c31ad" />
 
-super stable neighbor number 12 so that our bubbles can neatly stack into 3d space, exactly what we're used of our matter/mass/solids, exactly a little bit above the kissing number 12 for spheres
+super stable neighbor number 12, our nodes are packing like spheres in a 3d space, exactly what we're used of our matter/mass/solids, always a little bit above the kissing number 12 for spheres. instead of approaching from below
 
 <img width="3065" height="1948" alt="k_mean_scaling" src="https://github.com/user-attachments/assets/8c4ea430-08a8-461f-be57-255a4db5abbc" />
 
