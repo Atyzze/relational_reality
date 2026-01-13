@@ -266,4 +266,53 @@ which one will have gotten it closest? ;)
 
 zZz
 
+slope definitely confirmed, gathering more data points takes quite a while for graphs below, will update periodically, our 
+
+<img width="3033" height="1948" alt="gravity_G_scaling" src="https://github.com/user-attachments/assets/bddc9694-8928-4c7e-8c73-c234a94c31ad" />
+
+super stable neighbor number 12 so that our bubbles can neatly stack into 3d space, exactly what we're used of our matter/mass/solids, exactly a little bit above the kissing number 12 for spheres
+
+<img width="3065" height="1948" alt="k_mean_scaling" src="https://github.com/user-attachments/assets/8c4ea430-08a8-461f-be57-255a4db5abbc" />
+
+quench becoming more reliable as network size increases
+
+<img width="3073" height="1948" alt="quench_response_scaling" src="https://github.com/user-attachments/assets/01168a6f-7e03-4ef5-84f0-dcee5e163c7a" />
+
+triangles up ofc
+
+<img width="3023" height="1948" alt="triangles_scaling" src="https://github.com/user-attachments/assets/76b018f0-2181-4dcf-af48-51b4dc63d5e3" />
+
+dimensionality too ofc
+
+<img width="3012" height="1948" alt="hausdorff_dim_scaling" src="https://github.com/user-attachments/assets/795845b6-e731-47e8-9f1d-49cf968e63f1" />
+
+this one too
+
+<img width="3012" height="1948" alt="spectral_dim_scaling" src="https://github.com/user-attachments/assets/3f277bad-ebad-4435-8fc2-6bed05d79c93" />
+
+what a perfect straight line already, wonder what it means .. that's for later ;)
+
+<img width="3073" height="1948" alt="cosmological_const_scaling" src="https://github.com/user-attachments/assets/de5e2af2-2824-4178-9ef3-7586174dbbc5" />
+
+but we won't go too deep, until our other run finishes, I want the pretty pictures
+
+9.260/38.40M |  9:40:22 | T2.470e-320 | k11.847 | tri 17146 (  +8) [ +20] | Re(loop)1.000 | d=1 corr0.489 |  acc(rew)0.062 | 266 sps | ETA 1 day, 6:26:21
+
+9.270/38.40M |  9:41:29 | T2.470e-320 | k11.848 | tri 17139 (  -7) [ -15] | Re(loop)1.000 | d=1 corr0.438 |  acc(rew)0.048 | 266 sps | ETA 1 day, 6:27:16
+
+9.280/38.40M |  9:42:37 | T2.470e-320 | k11.851 | tri 17129 ( -10) [  -3] | Re(loop)1.000 | d=1 corr0.467 |  acc(rew)0.061 | 265 sps | ETA 1 day, 6:28:13
+
+9.290/38.40M |  9:43:53 | T2.470e-320 | k11.852 | tri 17112 ( -17) [  -7] | Re(loop)1.000 | d=1 corr0.458 |  acc(rew)0.039 | 265 sps | ETA 1 day, 6:29:36
+
+9.300/38.40M |  9:45:06 | T2.470e-320 | k11.855 | tri 17112 (  +0) [ +17] | Re(loop)1.000 | d=1 corr0.433 |  acc(rew)0.052 | 265 sps | ETA 1 day, 6:30:48
+
+9.310/38.40M |  9:46:15 | T2.470e-320 | k11.856 | tri 17107 (  -5) [  -5] | Re(loop)1.000 | d=1 corr0.509 |  acc(rew)0.051 | 265 sps | ETA 1 day, 6:31:50
+
+9.320/38.40M |  9:47:26 | T2.470e-320 | k11.862 | tri 17111 (  +4) [  +9] | Re(loop)1.000 | d=1 corr0.502 |  acc(rew)0.056 | 264 sps | ETA 1 day, 6:32:55
+
+9.330/38.40M |  9:48:35 | T2.470e-320 | k11.865 | tri 17102 (  -9) [ -13] | Re(loop)1.000 | d=1 corr0.514 |  acc(rew)0.054 | 264 sps | ETA 1 day, 6:33:54
+
+9.340/38.40M |  9:49:45 | T2.470e-320 | k11.866 | tri 17086 ( -16) [  -7] | Re(loop)1.000 | d=1 corr0.489 |  acc(rew)0.048 | 264 sps | ETA 1 day, 6:34:57
+
+
 
