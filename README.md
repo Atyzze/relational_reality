@@ -172,7 +172,7 @@ but its actual dimensionality _does_ seem to scale with N count, still figuring 
 
 <img width="3665" height="1507" alt="image" src="https://github.com/user-attachments/assets/f05b76b7-12d8-4dd1-aa4d-ba7c6be48d09" />
 
-I see G going up, let's stabilize her, couple G to N count to match our own universe size, like we already did with ssStepCount, find exact optimal ratio, done
+I see G going up, let's stabilize her, couple G to N count to match our own universe size, like we already did with ssStepCount, find exact optimal ratio, done (ehh, wait, wha, might have been a wiggle, not a clear trend yet, need to run more seeds instead of bigger N)
 
 almost there! .. .
 
