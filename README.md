@@ -84,7 +84,9 @@ and soon
 
 <img width="4682" height="2367" alt="N=6400_S=100_m" src="https://github.com/user-attachments/assets/8f72f2cc-c2cf-45d2-bed2-135628abc01f" />
 
-and where there is one, there will be two eventually, the trend was already settled in the past, up from zero
+and where there is one, there will be two eventually, the trend was already settled in the past, up from zero/nothing/uniformity/unity/onenesSs
+
+chaos was born, and grows into beautiful multi dimensional dynamic structure
 
 <img width="4682" height="2367" alt="N=6400_S=1000_m" src="https://github.com/user-attachments/assets/29fd69fe-c112-4ee6-a862-725b084f6e31" />
 
