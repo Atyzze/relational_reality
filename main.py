@@ -30,7 +30,8 @@ TEMP       = 0.20               #cheez, so much code left to document still (thi
 TEMP_SCALE_DOWN_FACTOR = 0.9999 #slowly cool it down, keep cool down rate constant
 PSI_STEP   = 0.25               #yo, what, there's that PSI again, psiiiii, no, psyyyyy feels better, psssssyyyyyyycccchhhhhheee.. Ellesdee tribute.
 THETA_STEP = 0.35               #no step!
-!
+
+
 # Action parameters / geometry / degree costs
 LAMBDA_E_BASE = -0.50           #under investigation, is this the best knob to play with first?
 LAMBDA_G      = 0.60            #or maybe this one?
@@ -1035,9 +1036,9 @@ def run():
         f"- Tstart={START_TEMP}, TscaleDownFactor={TEMP_SCALE_DOWN_FACTOR}\n"
         f"- trianglesTop={max_tri_count} | trianglesFinal={tri_count_final}",
         va="top",fontsize=10,)
-    fig.suptitle( f"Relational Reality | N={N} | S={STEP_COUNT}", fontsize=12,)
+    fig.suptitle( f"Relational Reality | N={N} | S={STEP_COUNT} s={SEED}", fontsize=12,)
     plt.tight_layout()
-    plt.savefig(FRAMES_DIR+"/N="+str(N)+"_S="+str(STEP_COUNT) + "_a.png", dpi=300, bbox_inches="tight")
+    plt.savefig(FRAMES_DIR+"/N="+str(N)+"_S="+str(STEP_COUNT) + f"_s={SEED}_a.png", dpi=300, bbox_inches="tight")
     plt.close()
     return G
 
