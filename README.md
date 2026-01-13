@@ -154,7 +154,7 @@ the ring is slowly evaporating
 
 <img width="4694" height="2367" alt="N=6400_S=19200000_m" src="https://github.com/user-attachments/assets/56cdd470-edd3-4155-8c1a-ac63e6952af4" />
 
-eventually turns into the exact same crystal every time, no matter the seed or N count, interesting .. .
+eventually turns into the exact same crystal every time, interesting .. .
 
-but it's actual dimensionality _does_ seem to scale with N count, still figuring out the trends/relationships to identify which knob to play with next
+but its actual dimensionality _does_ seem to scale with N count, still figuring out the trends/relationships to identify which knob to play with next
 
