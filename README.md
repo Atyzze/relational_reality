@@ -210,28 +210,6 @@ We should be able to build a ship that makes it there anyway, not due to traveli
 
 The philosophers got it right first. Relationism.
 
-4.680/38.40M |  2:50:21 | T1.099e-204 | k8.226 | tri 18392 ( +30) [  -4] | Re(loop)0.999 | d=1 corr0.384 |  acc(rew)0.132 | 458 sps | ETA 20:27:29
-
-4.690/38.40M |  2:51:01 | T4.043e-205 | k8.241 | tri 18418 ( +26) [  -4] | Re(loop)0.999 | d=1 corr0.389 |  acc(rew)0.119 | 457 sps | ETA 20:29:13
-
-4.700/38.40M |  2:51:39 | T1.487e-205 | k8.260 | tri 18450 ( +32) [  +6] | Re(loop)0.999 | d=1 corr0.369 |  acc(rew)0.143 | 456 sps | ETA 20:30:52
-
-4.710/38.40M |  2:52:20 | T5.471e-206 | k8.277 | tri 18486 ( +36) [  +4] | Re(loop)0.999 | d=1 corr0.371 |  acc(rew)0.126 | 455 sps | ETA 20:32:46
-
-4.720/38.40M |  2:53:00 | T2.013e-206 | k8.291 | tri 18496 ( +10) [ -26] | Re(loop)0.999 | d=1 corr0.434 |  acc(rew)0.132 | 455 sps | ETA 20:34:34
-
-4.730/38.40M |  2:53:41 | T7.404e-207 | k8.308 | tri 18531 ( +35) [ +25] | Re(loop)0.999 | d=1 corr0.397 |  acc(rew)0.133 | 454 sps | ETA 20:36:21
-
-4.740/38.40M |  2:54:20 | T2.724e-207 | k8.326 | tri 18559 ( +28) [  -7] | Re(loop)0.999 | d=1 corr0.397 |  acc(rew)0.119 | 453 sps | ETA 20:38:03
-
-4.750/38.40M |  2:55:00 | T1.002e-207 | k8.343 | tri 18598 ( +39) [ +11] | Re(loop)0.999 | d=1 corr0.461 |  acc(rew)0.129 | 452 sps | ETA 20:39:44
-
-4.760/38.40M |  2:55:35 | T3.686e-208 | k8.356 | tri 18604 (  +6) [ -33] | Re(loop)0.999 | d=1 corr0.357 |  acc(rew)0.116 | 452 sps | ETA 20:40:58
-
-4.770/38.40M |  2:56:11 | T1.356e-208 | k8.370 | tri 18631 ( +27) [ +21] | Re(loop)0.999 | d=1 corr0.353 |  acc(rew)0.118 | 451 sps | ETA 20:42:10
-
-4.780/38.40M |  2:56:47 | T4.988e-209 | k8.387 | tri 18670 ( +39) [ +12] | Re(loop)0.999 | d=1 corr0.373 |  acc(rew)0.130 | 451 sps | ETA 20:43:26
-
 4.790/38.40M |  2:57:23 | T1.835e-209 | k8.401 | tri 18695 ( +25) [ -14] | Re(loop)0.999 | d=1 corr0.388 |  acc(rew)0.120 | 450 sps | ETA 20:44:41
 
 4.800/38.40M |  2:57:59 | T6.749e-210 | k8.416 | tri 18722 ( +27) [  +2] | Re(loop)0.999 | d=1 corr0.384 |  acc(rew)0.128 | 449 sps | ETA 20:45:53
@@ -270,11 +248,9 @@ slope definitely confirmed, gathering more data points takes quite a while for g
 
 <img width="3033" height="1948" alt="gravity_G_scaling" src="https://github.com/user-attachments/assets/d915aec2-1867-4f44-af7e-9248fa7ab769" />
 
-
 super stable neighbor number 12, our nodes are packing like spheres in a 3d space, exactly what we're used of our matter/mass/solids, always a little bit above the kissing number 12 for spheres. instead of approaching from below
 
 <img width="3065" height="1948" alt="k_mean_scaling" src="https://github.com/user-attachments/assets/e07a6c49-764d-4667-9f13-64be4d960842" />
-
 
 quench becoming more reliable as network size increases
 
@@ -286,15 +262,17 @@ triangles up ofc
 
 dimensionality too ofc, and already seemingly converging, no meaningful jump past N1600 despite doubling N to 3200, but, need more data points to confirm, N12800 still running, had to cancel my sweeps because it was slowing my biggest run down, now, we finally are starting to see the ETA go down
 
-14.680/38.40M | 20:49:00 | T2.470e-320 | k12.144 | tri 14462 (  +0) [  +1] | Re(loop)1.000 | d=1 corr0.636 |  acc(rew)0.002 | 196 sps | ETA 1 day, 9:38:09
+<img width="3012" height="1948" alt="hausdorff_dim_scaling" src="https://github.com/user-attachments/assets/6eedea48-4ba7-42d7-9a7a-91064742b540" />
 
-14.690/38.40M | 20:50:04 | T2.470e-320 | k12.144 | tri 14464 (  +2) [  +2] | Re(loop)1.000 | d=1 corr0.607 |  acc(rew)0.003 | 196 sps | ETA 1 day, 9:37:39
+this one too, but no clear convergence yet, might need to stabilize it
 
-14.700/38.40M | 20:51:12 | T2.470e-320 | k12.144 | tri 14462 (  -2) [  -4] | Re(loop)1.000 | d=1 corr0.631 |  acc(rew)0.003 | 196 sps | ETA 1 day, 9:37:15
+<img width="3012" height="1948" alt="spectral_dim_scaling" src="https://github.com/user-attachments/assets/bc51105a-f7f8-42c4-982a-cba4294c6aca" />
 
-14.710/38.40M | 20:52:16 | T2.470e-320 | k12.143 | tri 14460 (  -2) [  +0] | Re(loop)1.000 | d=1 corr0.646 |  acc(rew)0.003 | 196 sps | ETA 1 day, 9:36:45
+what a perfect straight line already, wonder what it means .. that's for later ;)
 
-14.720/38.40M | 20:53:18 | T2.470e-320 | k12.144 | tri 14458 (  -2) [  +0] | Re(loop)1.000 | d=1 corr0.598 |  acc(rew)0.005 | 196 sps | ETA 1 day, 9:36:10
+<img width="3047" height="1948" alt="cosmological_const_scaling" src="https://github.com/user-attachments/assets/dd7e70f5-f9b3-46ed-b223-97e44329d16c" />
+
+but we won't go too deep, until our other run finishes, I want the pretty pictures
 
 14.730/38.40M | 20:54:20 | T2.470e-320 | k12.143 | tri 14454 (  -4) [  -2] | Re(loop)1.000 | d=1 corr0.616 |  acc(rew)0.006 | 196 sps | ETA 1 day, 9:35:38
 
@@ -305,36 +283,4 @@ dimensionality too ofc, and already seemingly converging, no meaningful jump pas
 14.760/38.40M | 20:57:28 | T2.470e-320 | k12.142 | tri 14449 (  -1) [  -1] | Re(loop)1.000 | d=1 corr0.589 |  acc(rew)0.004 | 196 sps | ETA 1 day, 9:34:00
 
 14.770/38.40M | 20:58:29 | T2.470e-320 | k12.142 | tri 14449 (  +0) [  +1] | Re(loop)1.000 | d=1 corr0.711 |  acc(rew)0.003 | 196 sps | ETA 1 day, 9:33:25
-
-<img width="3012" height="1948" alt="hausdorff_dim_scaling" src="https://github.com/user-attachments/assets/6eedea48-4ba7-42d7-9a7a-91064742b540" />
-
-this one too
-
-<img width="3012" height="1948" alt="spectral_dim_scaling" src="https://github.com/user-attachments/assets/bc51105a-f7f8-42c4-982a-cba4294c6aca" />
-
-what a perfect straight line already, wonder what it means .. that's for later ;)
-
-<img width="3047" height="1948" alt="cosmological_const_scaling" src="https://github.com/user-attachments/assets/dd7e70f5-f9b3-46ed-b223-97e44329d16c" />
-
-but we won't go too deep, until our other run finishes, I want the pretty pictures
-
-9.260/38.40M |  9:40:22 | T2.470e-320 | k11.847 | tri 17146 (  +8) [ +20] | Re(loop)1.000 | d=1 corr0.489 |  acc(rew)0.062 | 266 sps | ETA 1 day, 6:26:21
-
-9.270/38.40M |  9:41:29 | T2.470e-320 | k11.848 | tri 17139 (  -7) [ -15] | Re(loop)1.000 | d=1 corr0.438 |  acc(rew)0.048 | 266 sps | ETA 1 day, 6:27:16
-
-9.280/38.40M |  9:42:37 | T2.470e-320 | k11.851 | tri 17129 ( -10) [  -3] | Re(loop)1.000 | d=1 corr0.467 |  acc(rew)0.061 | 265 sps | ETA 1 day, 6:28:13
-
-9.290/38.40M |  9:43:53 | T2.470e-320 | k11.852 | tri 17112 ( -17) [  -7] | Re(loop)1.000 | d=1 corr0.458 |  acc(rew)0.039 | 265 sps | ETA 1 day, 6:29:36
-
-9.300/38.40M |  9:45:06 | T2.470e-320 | k11.855 | tri 17112 (  +0) [ +17] | Re(loop)1.000 | d=1 corr0.433 |  acc(rew)0.052 | 265 sps | ETA 1 day, 6:30:48
-
-9.310/38.40M |  9:46:15 | T2.470e-320 | k11.856 | tri 17107 (  -5) [  -5] | Re(loop)1.000 | d=1 corr0.509 |  acc(rew)0.051 | 265 sps | ETA 1 day, 6:31:50
-
-9.320/38.40M |  9:47:26 | T2.470e-320 | k11.862 | tri 17111 (  +4) [  +9] | Re(loop)1.000 | d=1 corr0.502 |  acc(rew)0.056 | 264 sps | ETA 1 day, 6:32:55
-
-9.330/38.40M |  9:48:35 | T2.470e-320 | k11.865 | tri 17102 (  -9) [ -13] | Re(loop)1.000 | d=1 corr0.514 |  acc(rew)0.054 | 264 sps | ETA 1 day, 6:33:54
-
-9.340/38.40M |  9:49:45 | T2.470e-320 | k11.866 | tri 17086 ( -16) [  -7] | Re(loop)1.000 | d=1 corr0.489 |  acc(rew)0.048 | 264 sps | ETA 1 day, 6:34:57
-
-
 
