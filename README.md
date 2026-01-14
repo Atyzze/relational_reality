@@ -268,31 +268,53 @@ zZz
 
 slope definitely confirmed, gathering more data points takes quite a while for graphs below, will update periodically
 
-<img width="3033" height="1948" alt="gravity_G_scaling" src="https://github.com/user-attachments/assets/bddc9694-8928-4c7e-8c73-c234a94c31ad" />
+<img width="3033" height="1948" alt="gravity_G_scaling" src="https://github.com/user-attachments/assets/d915aec2-1867-4f44-af7e-9248fa7ab769" />
+
 
 super stable neighbor number 12, our nodes are packing like spheres in a 3d space, exactly what we're used of our matter/mass/solids, always a little bit above the kissing number 12 for spheres. instead of approaching from below
 
-<img width="3065" height="1948" alt="k_mean_scaling" src="https://github.com/user-attachments/assets/8c4ea430-08a8-461f-be57-255a4db5abbc" />
+<img width="3065" height="1948" alt="k_mean_scaling" src="https://github.com/user-attachments/assets/e07a6c49-764d-4667-9f13-64be4d960842" />
+
 
 quench becoming more reliable as network size increases
 
-<img width="3073" height="1948" alt="quench_response_scaling" src="https://github.com/user-attachments/assets/01168a6f-7e03-4ef5-84f0-dcee5e163c7a" />
+<img width="3073" height="1948" alt="quench_response_scaling" src="https://github.com/user-attachments/assets/0ec59b93-4b0a-4038-9819-f0f2764c2bbc" />
 
 triangles up ofc
 
-<img width="3023" height="1948" alt="triangles_scaling" src="https://github.com/user-attachments/assets/76b018f0-2181-4dcf-af48-51b4dc63d5e3" />
+<img width="3082" height="1948" alt="triangles_scaling" src="https://github.com/user-attachments/assets/5df01e6e-fa99-4091-aa69-0b5ce2a4e1d6" />
 
-dimensionality too ofc
+dimensionality too ofc, and already seemingly converging, no meaningful jump past N1600 despite doubling N to 3200, but, need more data points to confirm, N12800 still running, had to cancel my sweeps because it was slowing my biggest run down, now, we finally are starting to see the ETA go down
 
-<img width="3012" height="1948" alt="hausdorff_dim_scaling" src="https://github.com/user-attachments/assets/795845b6-e731-47e8-9f1d-49cf968e63f1" />
+14.680/38.40M | 20:49:00 | T2.470e-320 | k12.144 | tri 14462 (  +0) [  +1] | Re(loop)1.000 | d=1 corr0.636 |  acc(rew)0.002 | 196 sps | ETA 1 day, 9:38:09
+
+14.690/38.40M | 20:50:04 | T2.470e-320 | k12.144 | tri 14464 (  +2) [  +2] | Re(loop)1.000 | d=1 corr0.607 |  acc(rew)0.003 | 196 sps | ETA 1 day, 9:37:39
+
+14.700/38.40M | 20:51:12 | T2.470e-320 | k12.144 | tri 14462 (  -2) [  -4] | Re(loop)1.000 | d=1 corr0.631 |  acc(rew)0.003 | 196 sps | ETA 1 day, 9:37:15
+
+14.710/38.40M | 20:52:16 | T2.470e-320 | k12.143 | tri 14460 (  -2) [  +0] | Re(loop)1.000 | d=1 corr0.646 |  acc(rew)0.003 | 196 sps | ETA 1 day, 9:36:45
+
+14.720/38.40M | 20:53:18 | T2.470e-320 | k12.144 | tri 14458 (  -2) [  +0] | Re(loop)1.000 | d=1 corr0.598 |  acc(rew)0.005 | 196 sps | ETA 1 day, 9:36:10
+
+14.730/38.40M | 20:54:20 | T2.470e-320 | k12.143 | tri 14454 (  -4) [  -2] | Re(loop)1.000 | d=1 corr0.616 |  acc(rew)0.006 | 196 sps | ETA 1 day, 9:35:38
+
+14.740/38.40M | 20:55:25 | T2.470e-320 | k12.143 | tri 14450 (  -4) [  +0] | Re(loop)1.000 | d=1 corr0.648 |  acc(rew)0.003 | 196 sps | ETA 1 day, 9:35:09
+
+14.750/38.40M | 20:56:27 | T2.470e-320 | k12.143 | tri 14450 (  +0) [  +4] | Re(loop)1.000 | d=1 corr0.634 |  acc(rew)0.002 | 196 sps | ETA 1 day, 9:34:36
+
+14.760/38.40M | 20:57:28 | T2.470e-320 | k12.142 | tri 14449 (  -1) [  -1] | Re(loop)1.000 | d=1 corr0.589 |  acc(rew)0.004 | 196 sps | ETA 1 day, 9:34:00
+
+14.770/38.40M | 20:58:29 | T2.470e-320 | k12.142 | tri 14449 (  +0) [  +1] | Re(loop)1.000 | d=1 corr0.711 |  acc(rew)0.003 | 196 sps | ETA 1 day, 9:33:25
+
+<img width="3012" height="1948" alt="hausdorff_dim_scaling" src="https://github.com/user-attachments/assets/6eedea48-4ba7-42d7-9a7a-91064742b540" />
 
 this one too
 
-<img width="3012" height="1948" alt="spectral_dim_scaling" src="https://github.com/user-attachments/assets/3f277bad-ebad-4435-8fc2-6bed05d79c93" />
+<img width="3012" height="1948" alt="spectral_dim_scaling" src="https://github.com/user-attachments/assets/bc51105a-f7f8-42c4-982a-cba4294c6aca" />
 
 what a perfect straight line already, wonder what it means .. that's for later ;)
 
-<img width="3073" height="1948" alt="cosmological_const_scaling" src="https://github.com/user-attachments/assets/de5e2af2-2824-4178-9ef3-7586174dbbc5" />
+<img width="3047" height="1948" alt="cosmological_const_scaling" src="https://github.com/user-attachments/assets/dd7e70f5-f9b3-46ed-b223-97e44329d16c" />
 
 but we won't go too deep, until our other run finishes, I want the pretty pictures
 
