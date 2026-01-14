@@ -157,7 +157,7 @@ def measure_quench_response(sim, G, rng):
 # -----------------------------------------------------------------------------
 def run_simulation_instance(seed_val, n_nodes, step_ratio):
     # 1. Load module
-    filename = "5.py"
+    filename = "main.py"
     if not os.path.exists(filename):
         print(f"[ERROR] Could not find {filename}.")
         sys.exit(1)
