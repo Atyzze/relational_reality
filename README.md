@@ -280,3 +280,22 @@ but we won't go too deep, until our other run finishes, I want the pretty pictur
 
 14.770/38.40M | 20:58:29 | T2.470e-320 | k12.142 | tri 14449 (  +0) [  +1] | Re(loop)1.000 | d=1 corr0.711 |  acc(rew)0.003 | 196 sps | ETA 1 day, 9:33:25
 
+almost ... she's been completely baked a long while ago already, not a single triangle update for multiple hours, it's not very efficient compute, I know
+
+am currently working on setting up the pipelines to split out graph generation from data processing & reporting
+
+33.910/38.40M | 2 days, 4:16:47 | T2.470e-320 | k12.055 | tri 14082 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.662 |  acc(rew)0.000 | 180 sps | ETA 6:55:20
+
+33.920/38.40M | 2 days, 4:17:58 | T2.470e-320 | k12.055 | tri 14082 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.668 |  acc(rew)0.000 | 180 sps | ETA 6:54:26
+
+33.930/38.40M | 2 days, 4:19:06 | T2.470e-320 | k12.055 | tri 14082 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.599 |  acc(rew)0.000 | 180 sps | ETA 6:53:33
+
+33.940/38.40M | 2 days, 4:20:15 | T2.470e-320 | k12.055 | tri 14082 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.644 |  acc(rew)0.000 | 180 sps | ETA 6:52:39
+
+but hey, at least, there's k=12 again, so rock solid stable converge already, we are hunting for the same dynamic for dH and sH, ideally we have both converge before we need to hit N12800 again as this takes painfully long to compute, another point of I've been digging in, where is the exact bottleneck currently?
+
+also, we basically have a self assembling crystal without any dimensionality programmed in, now what if we train this net of nodes on some spicy real world data sets?
+
+grow data/relationships/understanding on a crystal instead of needing to have every node relate to every other node, we rely on smart internal inherent 5d geometry and let things exist in relation to that internal always present structure, 
+
+TL;DR: did I just accidently invent/discover a better AI engine than the transformer? Meanwhile, everyone else is still using horses and complaining about their limitations?
