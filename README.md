@@ -298,4 +298,4 @@ also, we basically have a self assembling crystal without any dimensionality pro
 
 grow data/relationships/understanding on a crystal instead of needing to have every node relate to every other node, we rely on smart internal inherent 5d geometry and let things exist in relation to that internal always present structure, 
 
-TL;DR: did I just accidently invent/discover a better AI engine than the transformer? Meanwhile, everyone else is still using horses and complaining about their limitations?
+TL;DR: did I just accidently invent/discover a better AI engine than the transformer? Meanwhile, everyone else is still using horses and complaining about their maintenance costs?
