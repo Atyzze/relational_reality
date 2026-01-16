@@ -1,4 +1,4 @@
-download main.py & requirements.txt and open console in your download directory
+download main.py & requirements.txt and open console in your download directory (or git clone ofc)
 
 pip install -r requirements.txt
 
