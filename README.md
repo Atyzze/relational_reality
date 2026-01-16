@@ -299,3 +299,78 @@ also, we basically have a self assembling crystal without any dimensionality pro
 grow data/relationships/understanding on a crystal instead of needing to have every node relate to every other node, we rely on smart internal inherent 5d geometry and let things exist in relation to that internal always present structure, 
 
 TL;DR: did I just accidently invent/discover a better AI engine than the transformer? Meanwhile, everyone else is still using horses and complaining about their maintenance costs?
+
+
+38.350/38.40M | 2 days, 12:23:41 | T2.470e-320 | k12.053 | tri 14081 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.613 |  acc(rew)0.000 | 176 sps | ETA 0:04:43
+
+38.360/38.40M | 2 days, 12:24:42 | T2.470e-320 | k12.053 | tri 14081 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.610 |  acc(rew)0.000 | 176 sps | ETA 0:03:46
+
+38.370/38.40M | 2 days, 12:25:44 | T2.470e-320 | k12.053 | tri 14081 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.615 |  acc(rew)0.000 | 176 sps | ETA 0:02:50
+
+38.380/38.40M | 2 days, 12:26:47 | T2.470e-320 | k12.053 | tri 14081 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.646 |  acc(rew)0.000 | 176 sps | ETA 0:01:53
+
+38.390/38.40M | 2 days, 12:27:49 | T2.470e-320 | k12.053 | tri 14081 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.646 |  acc(rew)0.000 | 176 sps | ETA 0:00:56
+
+38.400/38.40M | 2 days, 12:28:52 | T2.470e-320 | k12.053 | tri 14081 (  +0) [  +0] | Re(loop)1.000 | d=1 corr0.564 |  acc(rew)0.000 | 176 sps | ETA 0:00:00
+
+>> Equilibration done.
+
+>> triangle count (exact): 14081
+
+>> Gauge invariance check...
+
+  gauge: max |Δ loop| = 3.331e-16
+  
+  gauge: max |Δ corr Re| = 1.484e-15 | max |Δ corr Im| = 2.193e-15
+
+>> Correlator vs hop distance...
+
+>> Quench response (Δρ vs Δcurv) ...
+
+   quench r(Δρ,Δcurv) ≈ 0.000
+
+>> Light cone (geometry frozen)...
+
+   front fit q=0.80: linear SSE=0, sqrt SSE=0
+
+>> Summary:
+ 
+
+   <k>=12.05 | λE_total=-0.500 
+   
+   backreaction r(ρ,curv) ≈ -0.018
+   
+   xi ≈ 4.894 hops
+   
+   triangles = 14081
+
+>> Calculating Einstein Geometry (Standard Ollivier-Ricci, alpha=0.5)...
+
+Slope (Gravitational Coupling G): -29.2665
+
+Intercept (Cosmological Constant): -0.7056
+
+>> Calculacting dimensionality.. .
+
+Hausdorff:4.83
+
+Spectral: 4.10
+
+>> Calculating geometry.. .
+
+>> Finished, find all data in folder: runs/2026-01-13_11-18-54_N12800_S38400000_s1
+
+Oh boy, I did not expect G to stablize itself as well, exactly around ~-30 .. something about 8 times pi + a little but nog RNG jiggle? :))
+
+Data points confirmed, now it's just.. . more pretty visuals! Ssadly, this run didn't have graph saving/writing during it yet so will need to re-run to extract more pretty pictures than sheer metrics, the end state, looks identical of course.
+
+<img width="4694" height="2367" alt="N=12800_S=38400000_m" src="https://github.com/user-attachments/assets/d2181ddc-f814-4801-a5b6-1f408cfd64ab" />
+
+<img width="5330" height="2954" alt="N=12800_S=38400000_a" src="https://github.com/user-attachments/assets/e4f78430-f26f-4f90-a362-670f6365fbf6" />
+
+<img width="2970" height="1191" alt="N=12800_S=38400000_d" src="https://github.com/user-attachments/assets/c1bb2743-caa7-4af3-9ba0-9f71da7dede8" />
+
+got gravity stabilizing for free already, whaaaaaat
+
+<img width="2956" height="1775" alt="N=12800_S=38400000_g" src="https://github.com/user-attachments/assets/a40c2039-2403-4545-80b9-08d01e339e96" />
+
