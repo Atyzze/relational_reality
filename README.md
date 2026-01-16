@@ -316,3 +316,15 @@ gravity stabilizing for free already, whaaaaaat
 
 <img width="2956" height="1775" alt="N=12800_S=38400000_g" src="https://github.com/user-attachments/assets/a40c2039-2403-4545-80b9-08d01e339e96" />
 
+<img width="3072" height="1948" alt="gravity_G_scaling" src="https://github.com/user-attachments/assets/a8d35de1-a9f9-4a95-8add-788087d18ddc" />
+
+<img width="3059" height="1948" alt="cosmological_const_scaling" src="https://github.com/user-attachments/assets/fb569dc9-3756-4f8f-b0ef-c5b60e4832b3" />
+
+<img width="2972" height="1948" alt="hausdorff_dim_scaling" src="https://github.com/user-attachments/assets/cf6ac305-bf48-4eea-9206-af90b86641d4" />
+
+<img width="3012" height="1948" alt="spectral_dim_scaling" src="https://github.com/user-attachments/assets/3adf3c5c-f3ab-455d-acba-93e2f9aee362" />
+
+I know we can tweak the triangles to get much higher with a little bit of further parameter fiddling, now I better know what slopes to expect when further exploring
+
+<img width="3177" height="1948" alt="triangles_scaling" src="https://github.com/user-attachments/assets/c5a406d4-5428-4878-9321-d64342277084" />
+
