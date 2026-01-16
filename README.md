@@ -6,7 +6,7 @@ python main.py
 
 the default is set to N100N and takes about a minute on decade old budget laptop
 
-python main.py -N400 (to increase N count)
+python main.py -N 400 (to increase N count to whatever you want, tested and scales up to N12800 just fine)
 
 the numbered images are snapshots of the universe in different stages, the file name number being the step count in thousands
 
