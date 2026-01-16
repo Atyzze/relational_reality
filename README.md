@@ -1,6 +1,12 @@
-run main.py in the terminal, type 'python main.py' & hit the enter key
+download main.py & requirements.txt and open console in your download directory
 
-you'll need a somewhat beefy computer/laptop to generate pretty graphics, but it should run on your grandma's potential laptop just fine too, just, very slowly
+pip install -r requirements.txt
+
+python main.py 
+
+the default is set to N100N and takes about a minute on decade old budget laptop
+
+python main.py -N400 (to increase N count)
 
 the numbered images are snapshots of the universe in different stages, the file name number being the step count in thousands
 
