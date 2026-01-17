@@ -8,9 +8,7 @@ the default is set to N100 and takes about a minute on decade old budget laptop
 
 python main.py -N 12800
 
-results below
-
-python main.py -N 1000 -S 1000000 (if you want to snapshot/see the universe after 1 million steps and stop there instead of letting it fully crystalize)
+results below, without setting step count, it defaults to N * 3000 as step count, to let it fully crystalize.
 
 <img width="4694" height="2367" alt="N=12800_S=38400000_m" src="https://github.com/user-attachments/assets/704210a5-c169-4097-8a36-72a29d54a849" />
 
@@ -33,3 +31,7 @@ python main.py -N 1000 -S 1000000 (if you want to snapshot/see the universe afte
 <img width="3059" height="1948" alt="cosmological_const_scaling" src="https://github.com/user-attachments/assets/fff01343-ab13-4ff6-8f44-ee9750c76ad6" />
 
 this is a work in progresS—~𓆙𓂀
+
+python main.py -N 1000 -S 1000000 (if you want to snapshot/test/see the universe/structure after 1 million steps and stop there instead of letting it fully crystalize)
+
+<img width="5292" height="2954" alt="N=12800_S=200000_s=1_a" src="https://github.com/user-attachments/assets/2d8b3100-80b6-41e0-bd29-d897f9822ce3" />
