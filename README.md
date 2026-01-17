@@ -10,6 +10,8 @@ python main.py -N 12800
 
 results below
 
+python main.py -N 1000 -S 1000000 (if you want to snapshot/see the universe after 1 million steps and stop there instead of letting it fully crystalize)
+
 <img width="4694" height="2367" alt="N=12800_S=38400000_m" src="https://github.com/user-attachments/assets/704210a5-c169-4097-8a36-72a29d54a849" />
 
 <img width="5330" height="2954" alt="N=12800_S=38400000_a" src="https://github.com/user-attachments/assets/183313f3-30d4-4952-9b2b-6c9e0b2d843a" />
