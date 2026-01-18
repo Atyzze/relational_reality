@@ -32,6 +32,6 @@ results below, without setting step count, it defaults to N * 3000 as step count
 
 this is a work in progresS—~𓆙𓂀
 
-python main.py -N 1000 -S 1000000 (if you want to snapshot/test/see the universe/structure after 1 million steps and stop there instead of letting it fully crystalize)
+python main.py -N 12800 -S 2000000 (if you want to snapshot/test/see the universe/structure after 2 million steps and stop there instead of letting it fully crystalize)
 
-<img width="5292" height="2954" alt="N=12800_S=200000_s=1_a" src="https://github.com/user-attachments/assets/2d8b3100-80b6-41e0-bd29-d897f9822ce3" />
+<img width="4692" height="2367" alt="N=12800_S=2000000_m" src="https://github.com/user-attachments/assets/c69e06ab-5df0-4e57-bded-1d0466fd935a" />
