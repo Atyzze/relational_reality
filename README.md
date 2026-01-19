@@ -67,4 +67,7 @@ and then eventually extrapollate trends to a number in between 10^84 and 10^188
 <img width="4692" height="2367" alt="N=6400_S=800000_m" src="https://github.com/user-attachments/assets/ce225a29-fda7-4a81-ab0d-87ef896d4f88" />
 <img width="4694" height="2367" alt="N=6400_S=1000000_m" src="https://github.com/user-attachments/assets/4f2b9873-2e27-4127-873b-3ad50ae28c63" />
 
+<img width="4692" height="2367" alt="N=6400_S=2000000_m" src="https://github.com/user-attachments/assets/0c908bbe-6dd5-4b6f-9a8b-0701b273e29f" />
+
+
 
