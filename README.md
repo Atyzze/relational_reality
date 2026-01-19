@@ -51,3 +51,20 @@ Next new data point eta >1w
 Meanwhile I am working on optimizing the pipeline to try and get to n=1000000 
 
 and then eventually extrapollate trends to a number in between 10^84 and 10^188
+
+<img width="4682" height="2367" alt="N=6400_S=1_m" src="https://github.com/user-attachments/assets/2083c170-de3d-4baf-90cb-ddd55e090b8d" />
+
+<img width="4682" height="2367" alt="N=6400_S=100_m" src="https://github.com/user-attachments/assets/702d4b0d-d432-4a7e-945d-e99f07ea4891" />
+<img width="4682" height="2367" alt="N=6400_S=1000_m" src="https://github.com/user-attachments/assets/dda6b4b9-e9c5-4bf2-9c92-4f4cff4d27ca" />
+<img width="4682" height="2367" alt="N=6400_S=10000_m" src="https://github.com/user-attachments/assets/4ffc3ba3-cb6b-4d85-8104-1ad29dfddcd7" />
+<img width="4682" height="2367" alt="N=6400_S=100000_m" src="https://github.com/user-attachments/assets/0d62bab5-35c0-4243-b90c-b2f0d20ca8e1" />
+<img width="4682" height="2367" alt="N=6400_S=200000_m" src="https://github.com/user-attachments/assets/843cff90-b081-48ff-8d7d-95d48ab9a51d" />
+<img width="4692" height="2367" alt="N=6400_S=300000_m" src="https://github.com/user-attachments/assets/6d065fb4-e32a-4955-a121-22d43445581e" />
+<img width="4690" height="2367" alt="N=6400_S=400000_m" src="https://github.com/user-attachments/assets/36866ed9-efb8-4ea6-ad3e-c86c2b6e33c4" />
+<img width="4690" height="2367" alt="N=6400_S=500000_m" src="https://github.com/user-attachments/assets/f1bbc408-65f9-491c-8d87-378ca6a2bb0c" />
+<img width="4692" height="2367" alt="N=6400_S=600000_m" src="https://github.com/user-attachments/assets/426396f4-75b2-4b9e-a5c3-128ed6657ff8" />
+<img width="4692" height="2367" alt="N=6400_S=700000_m" src="https://github.com/user-attachments/assets/9168f403-c8c5-44ad-a471-866ea463aa95" />
+<img width="4692" height="2367" alt="N=6400_S=800000_m" src="https://github.com/user-attachments/assets/ce225a29-fda7-4a81-ab0d-87ef896d4f88" />
+<img width="4694" height="2367" alt="N=6400_S=1000000_m" src="https://github.com/user-attachments/assets/4f2b9873-2e27-4127-873b-3ad50ae28c63" />
+
+
