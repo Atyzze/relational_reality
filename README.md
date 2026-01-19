@@ -1,9 +1,11 @@
 download main.py & requirements.txt and open console in your download directory (or git clone ofc)
 
 #create local virtual environment for your python snek to run in
+
 python -m venv venv
 
 #ask your LLM/IT-person of preference to match your local OS
+
 source venv/bin/activate 
 
 pip install -r requirements.txt
