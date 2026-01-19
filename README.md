@@ -1,10 +1,16 @@
 download main.py & requirements.txt and open console in your download directory (or git clone ofc)
 
+#create local virtual environment for your python snek to run in
+python -m venv venv
+
+#ask your LLM/IT-person of preference to match your local OS
+source venv/bin/activate 
+
 pip install -r requirements.txt
 
 python main.py 
 
-the default is set to N100 and takes about a minute on decade old budget laptop
+the default is set to N100 and takes about a minute to calculcate on a decade old budget laptop
 
 python main.py -N 12800
 
@@ -35,3 +41,11 @@ this is a work in progresS—~𓆙𓂀
 python main.py -N 12800 -S 2000000 (if you want to snapshot/test/see the universe/structure after 2 million steps and stop there instead of letting it fully crystalize)
 
 <img width="4692" height="2367" alt="N=12800_S=2000000_m" src="https://github.com/user-attachments/assets/c69e06ab-5df0-4e57-bded-1d0466fd935a" />
+
+.. currently simming a N25600 run to hopefully finalize the gravity and other dimensionality curves .. (we might need 2 more x2's to get there maybe even x4)
+
+Next new data point eta >1w
+
+Meanwhile I am working on optimizing the pipeline to try and get to n=1000000 
+
+and then eventually extrapollate trends to a number in between 10^84 and 10^188
