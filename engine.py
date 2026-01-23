@@ -16,8 +16,8 @@ class PhysicsEngine:
         self.E_tracker = np.array([0], dtype=np.int32)
 
         for i in range(N):
-            #self.psi[i] = np.random.normal(0, 0.1) + 1j * np.random.normal(0, 0.1)
-            self.psi[i] = np.random.normal(0, 0.1) + 1j * np.random.normal(0, 0.1)
+            #self.psi[i] = np.random.normal(0, 0.1) + 1j * np.random.normal(0, 0.1) #init all as random instead
+            self.psi[i] = 0 #init to 0, all the same instead of all random
 
         self.params = np.array([
             0.20,   # 0: TEMP
@@ -35,7 +35,7 @@ class PhysicsEngine:
             0.35,   # 12: THETA_STEP
             0.9999, # 13: TEMP_SCALE
             0.01,   # 14: MU_DEG2
-            0.95    # 15: P_TRIADIC_TOGGLE
+            0.99    # 15: P_TRIADIC_TOGGLE
         ], dtype=np.float64)
 
     @property
@@ -55,9 +55,7 @@ class PhysicsEngine:
         # Pass edge tracker to compiled function
         attempt_step(self.N, self.psi, self.theta_matrix, self.adj_matrix, self.params, self.E_tracker)
 
-
 # --- COMPILED CORE FUNCTIONS ---
-
 @njit(cache=True)
 def get_energy_local_psi(i, psi, theta_matrix, adj_matrix, N, params):
     kappa = params[1]
@@ -211,8 +209,6 @@ def get_edges(adj_matrix, N):
 
 @njit(cache=True)
 def attempt_step(N, psi, theta_matrix, adj_matrix, params, E_tracker):
-    #np.random.seed(seed_val)
-
     r = np.random.random()
 
     temp = params[0]
