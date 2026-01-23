@@ -405,7 +405,7 @@ def main():
 
     # --- CORE SELECTION ---
     max_cores = cpu_count()
-    default_cores = max(1, max_cores - 2)
+    default_cores = 1
     print(f"\n--- Resource Allocation ---")
     print(f"Available Cores: {max_cores}")
 
