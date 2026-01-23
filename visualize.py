@@ -18,7 +18,7 @@ import subprocess
 # --- CONFIGURATION ---
 RUNS_DIR = "runs"
 SEED_FIXED = 42 # For visualization consistency
-MAX_NODES_LIMIT = 15000
+MAX_NODES_LIMIT = 15000 # Increased limit for MDS calculations
 
 if __name__ == "__main__":
     warnings.filterwarnings("ignore")
@@ -112,14 +112,11 @@ def smart_sample_sort(items):
 
     # --- PHASE 2: SEQUENTIAL 0-25% ---
     # "do 0-25% in 1 go"
-    # We iterate up to p25. Any index already added (like 0, 12.5%, 25%) is skipped by `add`.
     for i in range(p25 + 1):
         add(i)
 
     # --- PHASE 3: JUMP AROUND REMAINING 75% ---
-    # "jump around for the last remaining 75%"
     # We use the bisection queue method strictly on the range [p25, n-1]
-
     queue = [(p25, n - 1)]
 
     while queue:
@@ -258,8 +255,8 @@ def process_single_step(args):
             pos_spec = np.zeros((N, 2))
 
         # C & D. Classical & Hologram: MDS (Slow)
-        # Only run MDS if small enough or sparse enough to be viable
-        if G.number_of_edges() > 0 and N < 2000:
+        # CHANGED: Replaced 'N < 2000' with 'N <= MAX_NODES_LIMIT' (15000)
+        if G.number_of_edges() > 0 and N <= MAX_NODES_LIMIT:
             dist_matrix = get_distance_matrix(G)
 
             # 2D MDS
@@ -408,7 +405,7 @@ def main():
 
     # --- CORE SELECTION ---
     max_cores = cpu_count()
-    default_cores = 1
+    default_cores = max(1, max_cores - 2)
     print(f"\n--- Resource Allocation ---")
     print(f"Available Cores: {max_cores}")
 
