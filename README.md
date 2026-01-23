@@ -14,7 +14,5 @@ this is a work in progresS—~𓆙𓂀
 <img width="3000" height="2400" alt="viz_ultimate_step_001920000" src="https://github.com/user-attachments/assets/1d04d732-7836-4d0c-b465-cd880fad2b14" />
 <img width="3000" height="2400" alt="viz_ultimate_step_002560000" src="https://github.com/user-attachments/assets/c665bca6-d7a1-4c69-9489-68551f5cb0fc" />
 <img width="3000" height="2400" alt="viz_ultimate_step_003200000" src="https://github.com/user-attachments/assets/eb6f8201-44fb-4931-bd1a-bc894a4b69b2" />
-<img width="3000" height="2400" alt="viz_ultimate_step_003840000" src="https://github.com/user-attachments/assets/17363cc6-d0ce-4e33-b2f6-1ffb9325bcf2" />
-<img width="3000" height="2400" alt="viz_ultimate_step_004480000" src="https://github.com/user-attachments/assets/cbea3b7b-2ce5-48a0-9fe1-69184f76b066" />
 <img width="3000" height="2400" alt="viz_ultimate_step_005120000" src="https://github.com/user-attachments/assets/6494c680-3f17-4c2c-a4d1-c20d3940fb4e" />
 <img width="3000" height="2400" alt="viz_ultimate_step_064000000" src="https://github.com/user-attachments/assets/392c766c-ad6d-485e-84e2-a231d36c2a3c" />
