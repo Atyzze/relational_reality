@@ -58,16 +58,17 @@ def select_option(options, prompt_text):
         print("Invalid selection. Try again.")
 
 def open_file_explorer(path):
-    """Opens the file explorer to the given path in a cross-platform way."""
+    """Opens the file explorer to the given path in a cross-platform way, suppressing stderr."""
     try:
         system = platform.system()
         if system == "Windows":
             os.startfile(path)
         elif system == "Darwin":  # macOS
-            subprocess.Popen(["open", path])
+            subprocess.Popen(["open", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         else:  # Linux/Unix
-            subprocess.Popen(["xdg-open", path])
+            subprocess.Popen(["xdg-open", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception as e:
+        # Only print python-level errors, not subprocess noise
         print(f"Could not open file explorer: {e}")
 
 # --- HYBRID SAMPLING LOGIC ---
