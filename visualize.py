@@ -18,7 +18,7 @@ import subprocess
 # --- CONFIGURATION ---
 RUNS_DIR = "runs"
 SEED_FIXED = 42 # For visualization consistency
-MAX_NODES_LIMIT = 15000 # Increased limit for MDS calculations
+MAX_NODES_LIMIT = 15000 
 
 if __name__ == "__main__":
     warnings.filterwarnings("ignore")
@@ -32,10 +32,16 @@ def get_subfolders(path):
     return [f for f in os.listdir(path) if os.path.isdir(os.path.join(path, f))]
 
 def select_option(options, prompt_text):
-    """Simple console menu for selection."""
+    """Console menu with auto-select for single options."""
     if not options:
         print(f"No options found for: {prompt_text}")
         return None
+
+    # --- AUTO-SELECT LOGIC ---
+    if len(options) == 1:
+        print(f">> Auto-selecting only option for {prompt_text}: {options[0]}")
+        return options[0]
+    # -------------------------
 
     print(f"\n--- {prompt_text} ---")
     for i, opt in enumerate(options):
@@ -86,55 +92,35 @@ def smart_sample_sort(items):
             visited.add(idx)
 
     # --- PHASE 1: KEY FRAMES ---
-    # "last frame first still, then the first"
     add(n - 1)
     add(0)
-
-    # "then the 50%"
     add(int(n * 0.5))
-
-    # "then 25% and 75%"
     p25 = int(n * 0.25)
     add(p25)
     add(int(n * 0.75))
-
-    # "and then 12.5%"
     add(int(n * 0.125))
-
-    # "right in between 25 and 50" (37.5%)
     add(int(n * 0.375))
-
-    # "right in between 50 and 75" (62.5%)
     add(int(n * 0.625))
-
-    # "in between 75 and 100" (87.5%)
     add(int(n * 0.875))
 
     # --- PHASE 2: SEQUENTIAL 0-25% ---
-    # "do 0-25% in 1 go"
     for i in range(p25 + 1):
         add(i)
 
     # --- PHASE 3: JUMP AROUND REMAINING 75% ---
-    # We use the bisection queue method strictly on the range [p25, n-1]
     queue = [(p25, n - 1)]
 
     while queue:
         new_queue = []
         for start, end in queue:
             mid = (start + end) // 2
-
-            add(mid) # Try adding midpoint
-
-            # Continue splitting
+            add(mid)
             if mid - start > 1:
                 new_queue.append((start, mid))
             if end - mid > 1:
                 new_queue.append((mid, end))
-
         queue = new_queue
 
-    # Map indices back to actual item objects
     return [items[i] for i in ordered_indices]
 
 # --- CORE LOGIC ---
@@ -255,7 +241,6 @@ def process_single_step(args):
             pos_spec = np.zeros((N, 2))
 
         # C & D. Classical & Hologram: MDS (Slow)
-        # CHANGED: Replaced 'N < 2000' with 'N <= MAX_NODES_LIMIT' (15000)
         if G.number_of_edges() > 0 and N <= MAX_NODES_LIMIT:
             dist_matrix = get_distance_matrix(G)
 
@@ -331,7 +316,6 @@ def main():
     n_path = os.path.join(RUNS_DIR, ver_str)
     n_counts = get_subfolders(n_path)
 
-    # Custom Sort: Extract number after 'N'
     def sort_key_n(x):
         if x.startswith('N') and x[1:].isdigit():
             return int(x[1:])
@@ -427,7 +411,7 @@ def main():
     print(f">> Rendering on {n_cores} cores...")
 
     # Run
-    # imap keeps order of iterable (which is now sorted by our smart logic)
+    open_file_explorer(output_dir)
     with Pool(processes=n_cores) as pool:
         list(tqdm(pool.imap(process_single_step, tasks), total=len(tasks)))
 
