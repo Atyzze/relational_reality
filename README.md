@@ -42,6 +42,8 @@ Oh no, that TL;DR ended up being a lie ;( (sorry, oops)
 
 <img width="6000" height="5100" alt="E1_N12800_S1000_i000_000_000_k0 000" src="https://github.com/user-attachments/assets/19ac927c-e9f1-4203-8bcc-8c2310fed2b6" />
 
+I will subtitle/elaborate later. There's much happening here. So much to do. So much to wait as well. Patience with the hardware, be reasonbly gentle.
+
 <img width="6000" height="5100" alt="E1_N12800_S1000_i000_100_000_k0 007" src="https://github.com/user-attachments/assets/aa1f6e50-6d6f-4c62-b4c2-2ea90512ac57" />
 
 <img width="6000" height="5100" alt="E1_N12800_S1000_i000_200_000_k0 015" src="https://github.com/user-attachments/assets/a3a8177c-db7d-4162-9c1f-d0c8ae350256" />
