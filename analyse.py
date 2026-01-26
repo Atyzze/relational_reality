@@ -5,23 +5,15 @@ import pandas as pd
 import networkx as nx
 import numpy as np
 import time
-import json
-import hashlib
 import warnings
 import shutil
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 # --- CONFIGURATION ---
 RUNS_DIR = "runs"
-STABILITY_WINDOW = 10      # Look at last 10 snapshots for final validation
-STABILITY_THRESHOLD = 0.01 # 1% change allowed
+STABILITY_WINDOW = 10      # Used for data integrity validation (checking last X rows for corruption)
+MIN_SNAPSHOTS = 3          # Minimum snapshots required within the 1% window to confirm stability
 PROBE_COUNT = 100          # Keep low to speed up Hausdorff
-REQUIRED_FILE_COUNT = 101  # Exact number of steps (0-100) required to be considered "Finished"
-
-# --- ACTIVITY CHECK CONFIG ---
-ACTIVITY_CHECK_WINDOW = 4        # Check time diffs between the last 4 files
-ACTIVITY_TIMEOUT_MULTIPLIER = 3.0 # If time since last file > Avg_Step_Time * 3.0, consider Dead.
-MIN_FILES_FOR_ACTIVITY = 2       # Need at least 2 files to calculate a delta
 
 # --- WARNING SUPPRESSION ---
 try:
@@ -34,194 +26,134 @@ warnings.filterwarnings("ignore", module="numpy")
 
 # --- HELPER: FORMATTING ---
 def fmt_step(step):
-    """
-    Helper to format step count to match drive.py.
-    Example: 1 -> '000_000_001'
-    """
+    """Helper to format step count to match drive.py."""
     return f"{step:011_d}"
 
-# --- HELPER: CONFIG HASHING ---
-def get_config_signature(data_folder_path, version_id):
-    """
-    Generates a short hash based on engine.py.
-    Assumes structure: runs/E<ver>/N<N>/S<seed>/data
-    So engine.py is at: runs/E<ver>/engine.py
-    """
-    # Go up 3 levels: data -> S<seed> -> N<N> -> E<ver>
-    version_dir = os.path.dirname(os.path.dirname(os.path.dirname(data_folder_path)))
-    engine_path = os.path.join(version_dir, "engine.py")
-
-    hasher = hashlib.sha256()
-
-    if os.path.exists(engine_path):
-        with open(engine_path, 'rb') as f:
-            hasher.update(f.read())
-    else:
-        # Fallback: check if engine exists in the data folder itself (older versions)
-        local_engine = os.path.join(data_folder_path, "engine.py")
-        if os.path.exists(local_engine):
-             with open(local_engine, 'rb') as f:
-                hasher.update(f.read())
-        else:
-            hasher.update(b"NO_ENGINE")
-
-    return hasher.hexdigest()[:8]
-
 def extract_metadata(data_folder_path):
-    """
-    Extracts Version, N, and Seed from path hierarchy.
-    Expected: runs/E<ver>/N<N>/S<seed>/data
-    """
+    """Extracts Version, N, and Seed from path hierarchy."""
     try:
-        # path parts: [..., 'runs', 'E0', 'N100', 'S1000', 'data']
         path_parts = os.path.normpath(data_folder_path).split(os.sep)
-
-        # We expect 'data' to be the last part
-        if path_parts[-1] != 'data':
-            return 0, 0, 0
-
-        seed_str = path_parts[-2] # S1000
-        n_str = path_parts[-3]    # N100
-        ver_str = path_parts[-4]  # E0
-
-        # Strip prefixes
+        if path_parts[-1] != 'data': return 0, 0, 0
+        seed_str, n_str, ver_str = path_parts[-2], path_parts[-3], path_parts[-4]
         seed = int(seed_str[1:]) if seed_str.startswith('S') and seed_str[1:].isdigit() else 0
         N = int(n_str[1:]) if n_str.startswith('N') and n_str[1:].isdigit() else 0
         version = int(ver_str[1:]) if ver_str.startswith('E') and ver_str[1:].isdigit() else 0
-
         return version, N, seed
     except:
         return 0, 0, 0
 
 def get_metrics_path(data_folder_path, version, N, seed):
-    """
-    Constructs the metrics file path.
-    Location: Parent folder of 'data' (the seed folder).
-    Name: E{id}_N{N}_S{seed}_metrics.csv
-    """
     parent_dir = os.path.dirname(data_folder_path)
     filename = f"E{version}_N{N}_S{seed}_metrics.csv"
     return os.path.join(parent_dir, filename)
 
 # --- PHYSICS METRICS ---
-
 def compute_hausdorff_dimension(G, probes=PROBE_COUNT):
-    """Estimates Hausdorff dimension via Box-Counting on the graph metric."""
-    if G.number_of_nodes() < 5 or G.number_of_edges() == 0:
-        return 0.0
-
+    if G.number_of_nodes() < 5 or G.number_of_edges() == 0: return 0.0
     nodes = list(G.nodes())
     centers = np.random.choice(nodes, size=min(len(nodes), probes), replace=False)
-
     rs_all, counts_all = [], []
-
     for source in centers:
         dists = nx.single_source_shortest_path_length(G, source)
         max_d = max(dists.values())
         if max_d < 2: continue
-
         counts = np.zeros(max_d + 1)
-        for d in dists.values():
-            counts[d] += 1
-
+        for d in dists.values(): counts[d] += 1
         cumulative = np.cumsum(counts)
-        valid_r = np.arange(1, len(cumulative))
-        rs_all.extend(valid_r)
+        rs_all.extend(np.arange(1, len(cumulative)))
         counts_all.extend(cumulative[1:])
-
-    if len(rs_all) < 5:
-        return 0.0
-
+    if len(rs_all) < 5: return 0.0
     try:
-        log_r = np.log(rs_all)
-        log_n = np.log(counts_all)
+        log_r, log_n = np.log(rs_all), np.log(counts_all)
         mask = (log_r > np.log(1.5)) & (log_r < np.log(8))
-
-        if np.sum(mask) < 3:
-            slope, _ = np.polyfit(log_r, log_n, 1)
-        else:
-            slope, _ = np.polyfit(log_r[mask], log_n[mask], 1)
-
+        slope, _ = np.polyfit(log_r[mask], log_n[mask], 1) if np.sum(mask) >= 3 else np.polyfit(log_r, log_n, 1)
         return slope
-    except:
-        return 0.0
-
-# --- PHASE 1: METRIC GENERATION (SMART UPDATE) ---
+    except: return 0.0
 
 def verify_step_integrity(folder_path, step, expected_edges, version, N, seed):
-    """Checks if the file on disk matches the expected edge count in the CSV."""
-    # Pattern: E{v}_N{n}_S{s}_iter_{step}_edges.csv
+    """
+    Checks if the file on disk matches the metadata in the CSV.
+    Used to validate the last few entries of the metrics file.
+    """
     step_str = fmt_step(step)
     fpath = os.path.join(folder_path, f"E{version}_N{N}_S{seed}_iter_{step_str}_edges.csv")
 
     if not os.path.exists(fpath):
         return False
+
+    # Fast check: If expected edges is 0, file should be just header (or very small)
+    # If > 0, we can do a quick line count check if performance is okay,
+    # but for now, strictness is better to avoid "garbage out".
     try:
-        df = pd.read_csv(fpath)
-        actual_edges = len(df)
-        return actual_edges == expected_edges
+        # Optimization: Don't parse CSV, just count lines (faster)
+        with open(fpath, 'rb') as f:
+            lines = sum(1 for _ in f)
+
+        # Lines in file = edges + 1 (header)
+        return (lines - 1) == expected_edges
     except:
         return False
 
-def calculate_single_step(folder_path, step, version, N, seed):
-    """Calculates metrics for a single step."""
+def calculate_single_step(folder_path, step, version, N_meta, seed):
     step_str = fmt_step(step)
-    fpath = os.path.join(folder_path, f"E{version}_N{N}_S{seed}_iter_{step_str}_edges.csv")
-
+    fpath = os.path.join(folder_path, f"E{version}_N{N_meta}_S{seed}_iter_{step_str}_edges.csv")
     try:
         df = pd.read_csv(fpath)
-        if df.empty:
-            return {'step': step, 'N_actual': 0, 'edges': 0,
-                    'mean_degree': 0.0, 'triangles': 0, 'hausdorff': 0.0}
+        G = nx.from_pandas_edgelist(df, 'source', 'target') if not df.empty else nx.Graph()
 
-        G = nx.from_pandas_edgelist(df, 'source', 'target')
+        # --- ROBUST DEGREE CALCULATION ---
+        connected_nodes = G.number_of_nodes()
+        raw_degrees = [d for n, d in G.degree()]
+        missing_nodes = max(0, N_meta - connected_nodes)
+        degrees = raw_degrees + [0] * missing_nodes
+        if len(degrees) < N_meta: degrees += [0] * (N_meta - len(degrees))
 
-        N_curr = G.number_of_nodes()
-        E_curr = G.number_of_edges()
-        k_mean = (2 * E_curr) / N_curr if N_curr > 0 else 0
-        tri = sum(nx.triangles(G).values()) // 3
-        dim_h = compute_hausdorff_dimension(G)
+        k_mean, k_std = np.mean(degrees), np.std(degrees)
+        k_min, k_max = np.min(degrees), np.max(degrees)
+
+        if k_max > k_min:
+            counts, _ = np.histogram(degrees, bins=5, range=(k_min, k_max))
+        else:
+            counts = np.array([len(degrees)] + [0]*4)
+
+        current_sum = np.sum(counts)
+        if (N_meta - current_sum) != 0: counts[0] += (N_meta - current_sum)
 
         return {
             'step': step,
-            'N_actual': N_curr,
-            'edges': E_curr,
+            'N_actual': connected_nodes,
+            'edges': len(df),
             'mean_degree': k_mean,
-            'triangles': tri,
-            'hausdorff': dim_h
+            'std_degree': k_std,
+            'min_degree': k_min,
+            'max_degree': k_max,
+            'bin_1': counts[0], 'bin_2': counts[1], 'bin_3': counts[2],
+            'bin_4': counts[3], 'bin_5': counts[4],
+            'triangles': sum(nx.triangles(G).values()) // 3,
+            'hausdorff': compute_hausdorff_dimension(G)
         }
     except Exception:
         return None
 
 def process_folder_metrics(folder_path):
-    # Extract metadata to build filenames
     version, N, seed = extract_metadata(folder_path)
     metrics_path = get_metrics_path(folder_path, version, N, seed)
+    edge_files = glob.glob(os.path.join(folder_path, f"E{version}_N{N}_S{seed}_iter_*_edges.csv"))
 
-    # 1. Identify all available steps on disk
-    # Look for files like E0_N100_S1000_iter_000_000_000_edges.csv
-    search_pattern = os.path.join(folder_path, f"E{version}_N{N}_S{seed}_iter_*_edges.csv")
-    edge_files = glob.glob(search_pattern)
-
+    # 1. Get List of Steps on Disk
     disk_steps = []
-    # Regex matches: ...iter_([\d_]+)_edges.csv
-    pattern = re.compile(rf"iter_([\d_]+)_edges\.csv")
-
+    pattern = re.compile(rf"iter_([\d_]+)_edges")
     for f in edge_files:
-        filename = os.path.basename(f)
-        m = pattern.search(filename)
-        if m:
-            # removing underscores to parse integer
-            step_val = int(m.group(1).replace('_', ''))
-            disk_steps.append(step_val)
+        match = pattern.search(f)
+        if match:
+            disk_steps.append(int(match.group(1).replace('_', '')))
     disk_steps.sort()
 
-    if not disk_steps:
-        return 0
+    if not disk_steps: return 0, 0
 
-    # 2. Check existing metrics file
+    # 2. Smart Resume: Check existing CSV
     existing_df = pd.DataFrame()
-    start_calculation_from = 0
+    start_step = 0
 
     if os.path.exists(metrics_path):
         try:
@@ -229,401 +161,238 @@ def process_folder_metrics(folder_path):
             if not existing_df.empty:
                 existing_df = existing_df.sort_values('step')
 
-                # VERIFICATION: Check last 2 entries
-                valid_history = True
-                rows_to_check = existing_df.tail(2)
+                # Check the last entries.
+                # If they match disk, we assume the rest are fine.
+                # If any fail, we truncate to the last good one.
 
-                for _, row in rows_to_check.iterrows():
-                    step_check = int(row['step'])
-                    edges_check = int(row['edges'])
-                    if not verify_step_integrity(folder_path, step_check, edges_check, version, N, seed):
-                        valid_history = False
+                to_validate = existing_df.tail(STABILITY_WINDOW)
+                last_good_idx = -1
+
+                all_valid = True
+                failure_found = False
+
+                for idx, row in to_validate.iterrows():
+                    s = int(row['step'])
+                    e = int(row['edges'])
+                    if not verify_step_integrity(folder_path, s, e, version, N, seed):
+                        # Found a corruption/mismatch
+                        failure_found = True
+                        # Truncate existing_df to everything BEFORE this index
+                        existing_df = existing_df.loc[:idx-1]
                         break
 
-                if valid_history:
-                    last_recorded_step = int(existing_df.iloc[-1]['step'])
-                    start_calculation_from = last_recorded_step + 1
+                if not failure_found:
+                    # All checked rows were good. Resume from end.
+                    start_step = int(existing_df.iloc[-1]['step']) + 1
                 else:
-                    existing_df = pd.DataFrame()
-                    start_calculation_from = 0
-        except Exception:
-            existing_df = pd.DataFrame()
-            start_calculation_from = 0
+                    # We truncated. Resume from new end.
+                    if not existing_df.empty:
+                        start_step = int(existing_df.iloc[-1]['step']) + 1
+                        # Save the repaired CSV immediately so we don't have bad data on disk
+                        existing_df.to_csv(metrics_path, index=False)
+                    else:
+                        start_step = 0
+                        # File was effectively corrupt/empty, clear it
+                        open(metrics_path, 'w').close()
 
-    # 3. Determine tasks
-    steps_to_process = [s for s in disk_steps if s >= start_calculation_from]
+        except Exception as e:
+            # If CSV is unreadable, start over
+            existing_df = pd.DataFrame()
+            start_step = 0
+
+    # 3. Process Missing Steps
+    steps_to_process = [s for s in disk_steps if s >= start_step]
 
     if not steps_to_process:
-        return 0
+        return 0, (disk_steps[-1] if disk_steps else 0)
 
-    # 4. Compute Metrics for new steps
-    new_rows = []
-    for step in steps_to_process:
-        row = calculate_single_step(folder_path, step, version, N, seed)
-        if row:
-            new_rows.append(row)
+    new_rows = [calculate_single_step(folder_path, s, version, N, seed) for s in steps_to_process]
+    new_rows = [r for r in new_rows if r is not None]
 
-    # 5. Append or Overwrite
     if new_rows:
         df_new = pd.DataFrame(new_rows)
+        # Append logic
         if not existing_df.empty:
-            df_new.to_csv(metrics_path, mode='a', header=False, index=False)
+            # Ensure columns match before appending
+            if list(df_new.columns) == list(existing_df.columns):
+                df_new.to_csv(metrics_path, mode='a', header=False, index=False)
+            else:
+                # Columns mismatch (maybe schema update), re-write all
+                combined = pd.concat([existing_df, df_new], ignore_index=True)
+                combined.to_csv(metrics_path, mode='w', header=True, index=False)
         else:
             df_new.to_csv(metrics_path, mode='w', header=True, index=False)
 
-    return len(new_rows)
+    return len(new_rows), (disk_steps[-1] if disk_steps else 0)
 
-# --- PHASE 2: TIME SERIES & STABILITY CHECK ---
-
-def check_run_stability(folder_path):
+def check_run_status(folder_path):
+    """
+    Determines if a run is 'Stable'.
+    Criteria:
+    1. Triangle Count identical for the last 1% (OR last MIN_SNAPSHOTS, whichever is larger).
+    2. Graph must be connected.
+    """
     version_id, N, seed = extract_metadata(folder_path)
     metrics_path = get_metrics_path(folder_path, version_id, N, seed)
 
-    # Use version_id as the config identifier primarily, but we also hash engine
-    cfg_hash = get_config_signature(folder_path, version_id)
-
-    # Combined label for display
-    config_label = f"E{version_id}"
-
     if not os.path.exists(metrics_path):
-        return "No Metrics", None, config_label, (N, seed)
+        return False, [], f"E{version_id}", (N, seed), 0
 
     try:
-        df = pd.read_csv(metrics_path)
-        if len(df) < STABILITY_WINDOW:
-            return "Insufficient Data", None, config_label, (N, seed)
+        df = pd.read_csv(metrics_path).sort_values('step')
+        if df.empty: return False, [], f"E{version_id}", (N, seed), 0
 
-        df = df.sort_values('step')
-        tri_series = df['triangles'].values
-        steps = df['step'].values
-        total_steps = steps[-1] if len(steps) > 0 else 1
+        max_step = df['step'].max()
 
-        # 1. Peak Analysis
-        peak_idx = np.argmax(tri_series)
-        peak_val = tri_series[peak_idx]
-        peak_step = steps[peak_idx]
-        peak_pct = (peak_step / total_steps) * 100.0
+        # --- DYNAMIC WINDOW CALCULATION ---
+        # We don't strictly know 'interval' here without parsing, but we can infer
+        # or just grab the last MIN_SNAPSHOTS rows if the 1% window is too small.
 
-        # 2. Final Value
-        final_val = tri_series[-1]
+        # 1. Try 1% Window first
+        threshold_step = max_step - (max_step * 0.01)
+        window_df = df[df['step'] >= threshold_step]
 
-        # 3. Stability / Settling Time Analysis
-        last_window = tri_series[-STABILITY_WINDOW:]
-        final_avg = np.mean(last_window)
+        # 2. If 1% yields too few points, fallback to the last MIN_SNAPSHOTS strictly
+        if len(window_df) < MIN_SNAPSHOTS:
+            window_df = df.tail(MIN_SNAPSHOTS)
 
-        # Guard against division by zero if graph is empty
-        if final_avg == 0:
-             band_low = -0.1; band_high = 0.1
-        else:
-             band_low = final_avg * (1.0 - STABILITY_THRESHOLD)
-             band_high = final_avg * (1.0 + STABILITY_THRESHOLD)
+        # Safety: If we STILL don't have enough data (e.g. run just started), it's not stable.
+        if len(window_df) < MIN_SNAPSHOTS:
+             return False, [], f"E{version_id}", (N, seed), max_step
 
-        stabilized_step_idx = 0
-        for i in range(len(tri_series)-1, -1, -1):
-            val = tri_series[i]
-            if val < band_low or val > band_high:
-                stabilized_step_idx = i + 1
-                break
+        # 3. Check Connectivity (Must be connected at the end)
+        if window_df.iloc[-1]['min_degree'] <= 0:
+             return False, [], f"E{version_id}", (N, seed), max_step
 
-        if stabilized_step_idx >= len(steps): stabilized_step_idx = len(steps) - 1
+        # 4. Check Stability (Identical Triangles across window)
+        if window_df['triangles'].nunique() != 1:
+             return False, [], f"E{version_id}", (N, seed), max_step
 
-        stab_step = steps[stabilized_step_idx]
-        stab_pct = (stab_step / total_steps) * 100.0
+        # --- IF STABLE: GENERATE SLICES ---
+        slices = []
+        target_percentages = [0.01, 0.02, 0.03, 0.04, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.40,
+                              0.50, 0.60, 0.70, 0.80, 0.90, 1.00]
 
-        # 4. Status Check
-        window_min = np.min(last_window)
-        window_max = np.max(last_window)
-        window_mean = np.mean(last_window)
+        for p in target_percentages:
+            target = int(max_step * p)
+            idx = (df['step'] - target).abs().idxmin()
+            row = df.loc[idx]
 
-        if window_mean == 0:
-            pct_change = 0.0
-        else:
-            pct_change = (window_max - window_min) / window_mean
+            if abs(row['step'] - target) <= max(1, (0.15 * max_step)):
+                d = row.to_dict()
+                d['slice_lbl'] = f"{int(p*100)}%"
+                slices.append(d)
 
-        status = "Unstable" if pct_change > STABILITY_THRESHOLD else "Stable"
-
-        stats = df.iloc[-1].to_dict()
-        stats['peak_tri'] = peak_val
-        stats['peak_pct'] = peak_pct
-        stats['final_tri'] = final_val
-        stats['stab_pct'] = stab_pct
-
-        return status, stats, config_label, (N, seed)
-
+        return True, slices, f"E{version_id}", (N, seed), max_step
     except Exception as e:
-        return f"Error: {str(e)}", None, config_label, (N, seed)
+        return False, [], f"E{version_id}", (N, seed), 0
 
-# --- ACTIVITY ANALYSIS (NEW) ---
-def analyze_run_activity(file_list):
-    """
-    Determines if a run is 'Active' or 'Dead' based on the update frequency
-    of the last few files.
-
-    Returns: status (str), avg_step_time (float), time_since_last (float)
-    """
-    if not file_list:
-        return "Dead", 0, 0
-
-    # 1. Sort files by modification time
-    try:
-        # Get (filename, mtime) tuples
-        files_with_mtime = [(f, os.path.getmtime(f)) for f in file_list]
-        files_with_mtime.sort(key=lambda x: x[1]) # Sort by time ascending
-    except OSError:
-        # If file access fails
-        return "Unknown", 0, 0
-
-    last_mtime = files_with_mtime[-1][1]
-    now = time.time()
-    time_since_last = now - last_mtime
-
-    # If we have very few files, we can't calculate a trend,
-    # but we can check if it started very recently.
-    if len(files_with_mtime) < MIN_FILES_FOR_ACTIVITY:
-        # If last file is less than 5 minutes old, assume active start
-        if time_since_last < 300:
-            return "Active", 0, time_since_last
-        else:
-            return "Dead", 0, time_since_last
-
-    # 2. Get the tail for averaging
-    # We want the last ACTIVITY_CHECK_WINDOW + 1 files to get 'WINDOW' intervals
-    tail = files_with_mtime[-(ACTIVITY_CHECK_WINDOW + 1):]
-
-    intervals = []
-    for i in range(1, len(tail)):
-        diff = tail[i][1] - tail[i-1][1]
-        intervals.append(diff)
-
-    if not intervals:
-        return "Dead", 0, time_since_last
-
-    avg_step_time = sum(intervals) / len(intervals)
-
-    # 3. Determine Threshold
-    # Extrapolate: Next step expected at last_mtime + avg_step_time.
-    # Allow a tolerance buffer.
-
-    # Ensure avg_step_time is at least non-zero to avoid logic errors
-    if avg_step_time < 0.1: avg_step_time = 0.1
-
-    max_wait_time = avg_step_time * ACTIVITY_TIMEOUT_MULTIPLIER
-
-    # Absolute minimum wait of 30 seconds to prevent flagging fast runs that paused briefly
-    max_wait_time = max(max_wait_time, 30.0)
-
-    if time_since_last <= max_wait_time:
-        return "Active", avg_step_time, time_since_last
-    else:
-        return "Dead", avg_step_time, time_since_last
-
-# --- MAIN DRIVER ---
-
-def classify_folders(root_dir):
-    finished_folders = []
-    active_runs = []
-    dead_runs = []
-
+def find_all_data_folders(root_dir):
+    data_folders = []
     for root, dirs, files in os.walk(root_dir):
-        # In the new structure, we only care about 'data' folders
-        if os.path.basename(root) != 'data':
-            continue
-
-        # Extract Meta to build correct filename pattern
-        version, N_meta, seed = extract_metadata(root)
-        if N_meta == 0: continue
-
-        # Check file counts
-        # Pattern: E{v}_N{n}_S{s}_iter_*_edges.csv
-        edge_pattern = os.path.join(root, f"E{version}_N{N_meta}_S{seed}_iter_*_edges.csv")
-        node_pattern = os.path.join(root, f"E{version}_N{N_meta}_S{seed}_iter_*_nodes.csv")
-
-        edge_files = glob.glob(edge_pattern)
-        node_files = glob.glob(node_pattern)
-
-        if not edge_files and not node_files:
-            continue
-
-        e_count = len(edge_files)
-        n_count = len(node_files)
-
-        run_info = {
-            'path': root,
-            'edges': e_count,
-            'nodes': n_count
-        }
-
-        if e_count == REQUIRED_FILE_COUNT and n_count == REQUIRED_FILE_COUNT:
-            finished_folders.append(root)
-        else:
-            # Analyze Activity for incomplete runs
-            status, avg_time, ago = analyze_run_activity(edge_files)
-            run_info['avg_step_sec'] = avg_time
-            run_info['last_seen_sec'] = ago
-
-            if status == "Active":
-                active_runs.append(run_info)
-            else:
-                dead_runs.append(run_info)
-
-    return finished_folders, active_runs, dead_runs
+        if os.path.basename(root) == 'data':
+            ver, N, seed = extract_metadata(root)
+            if N > 0:
+                data_folders.append(root)
+    return data_folders
 
 def main():
-    print("="*135)
-    print("  RELATIONAL REALITY: STABILITY & DIMENSION ANALYSIS (INCREMENTAL)")
-    print("="*135)
+    print("="*140)
+    print("  RELATIONAL REALITY: EVOLUTION & DISTRIBUTION ANALYSIS")
+    print("="*140)
 
-    print(f">> Scanning runs/ directory for 'data' folders (Target Files: {REQUIRED_FILE_COUNT})...")
-    finished_folders, active_runs, dead_runs = classify_folders(RUNS_DIR)
+    print(f">> Scanning runs/ directory...")
+    all_folders = find_all_data_folders(RUNS_DIR)
 
-    if not finished_folders and not active_runs and not dead_runs:
-        print("No run folders found.")
+    if not all_folders:
+        print("No 'data' folders found in runs/ directory.")
         return
 
-    print(f"   Found {len(finished_folders)} finished runs.")
-    print(f"   Found {len(active_runs)} ACTIVE runs (currently computing).")
-    print(f"   Found {len(dead_runs)} DEAD/INCOMPLETE runs.\n")
+    # --- PHASE 1: UPDATE METRICS ---
+    t0 = time.time()
+    updated_count = 0
+    workers = max(1, os.cpu_count() - 2)
 
-    # --- PROCESS FINISHED RUNS ---
-    if finished_folders:
-        print(f">> Phase 1: Updating metrics for {len(finished_folders)} finished runs...")
-        t0 = time.time()
-        updated_count = 0
-        workers = max(1, os.cpu_count() - 2)
+    print(f"   Calculating missing metrics for {len(all_folders)} runs (Smart Resume)...")
+    with ProcessPoolExecutor(max_workers=workers) as executor:
+        futures = {executor.submit(process_folder_metrics, f): f for f in all_folders}
+        for i, future in enumerate(as_completed(futures)):
+            try:
+                cnt, _ = future.result()
+                updated_count += cnt
+            except Exception as e:
+                print(f"   Error processing {futures[future]}: {e}")
 
-        with ProcessPoolExecutor(max_workers=workers) as executor:
-            futures = {executor.submit(process_folder_metrics, f): f for f in finished_folders}
-            for i, future in enumerate(as_completed(futures)):
-                if i % 10 == 0:
-                    print(f"   Processed {i}/{len(finished_folders)}...", end='\r')
-                updated_count += future.result()
+    print(f"   Metrics update complete ({updated_count} new snapshots processed in {time.time()-t0:.1f}s).\n")
 
-        print(f"   Done. Calculated {updated_count} new steps in {time.time()-t0:.1f}s.\n")
+    # --- PHASE 2: GENERATE REPORT ---
+    completed_results = []
+    active_runs = []
 
-        print(f">> Phase 2: Stability Check (Threshold {STABILITY_THRESHOLD*100}%)...")
+    for f in all_folders:
+        is_complete, slices, label, meta, last_step = check_run_status(f)
 
-        results = []
-
-        for f in finished_folders:
-            status, row, label, meta = check_run_stability(f)
-            N, seed = meta
-
-            if row: # Only add valid results
-                results.append({
-                    'config': label,
-                    'N': N,
-                    'seed': seed,
-                    'status': status,
-                    'stats': row
-                })
-
-        print("-" * 135)
-        # Header
-        print(f"{'Version':<20} | {'N':<6} | {'Stb/Tot':<7} | {'<k>':<6} | {'Tri(Fin)':<9} | {'Tri(Pk)':<9} | {'Pk%':<6} | {'Stb%':<6} | {'Haus.'}")
-        print("-" * 135)
-
-        df_res = pd.DataFrame(results)
-        if not df_res.empty:
-            grouped = df_res.groupby(['config', 'N'])
-
-            for (cfg, n_val), group in grouped:
-                total = len(group)
-                stable_group = group[group['status'] == 'Stable']
-                stable_count = len(stable_group)
-
-                if stable_count > 0:
-                    # Basic Stats
-                    k_vals = [r['mean_degree'] for r in stable_group['stats']]
-                    h_vals = [r.get('hausdorff', 0.0) for r in stable_group['stats']]
-
-                    # Triangle Stats
-                    t_fin_vals = [r['final_tri'] for r in stable_group['stats']]
-                    t_pk_vals = [r['peak_tri'] for r in stable_group['stats']]
-                    pk_pct_vals = [r['peak_pct'] for r in stable_group['stats']]
-                    stb_pct_vals = [r['stab_pct'] for r in stable_group['stats']]
-
-                    # Formatting
-                    count_str = f"{stable_count}/{total}"
-                    k_str = f"{np.mean(k_vals):.2f}"
-                    h_str = f"{np.mean(h_vals):.2f}±{np.std(h_vals):.2f}"
-
-                    t_fin_str = f"{np.mean(t_fin_vals):.0f}"
-                    t_pk_str = f"{np.mean(t_pk_vals):.0f}"
-
-                    pk_pct_str = f"{np.mean(pk_pct_vals):.0f}%"
-                    stb_pct_str = f"{np.mean(stb_pct_vals):.0f}%"
-
-                else:
-                    count_str = f"0/{total}"
-                    k_str = "N/A"; h_str = "N/A"
-                    t_fin_str = "N/A"; t_pk_str = "N/A"
-                    pk_pct_str = "N/A"; stb_pct_str = "N/A"
-
-                print(f"{cfg:<20} | {n_val:<6} | {count_str:<7} | {k_str:<6} | {t_fin_str:<9} | {t_pk_str:<9} | {pk_pct_str:<6} | {stb_pct_str:<6} | {h_str}")
-
-        print("-" * 135)
-
-        # Detailed Warnings for Finished Runs
-        unstable_runs = df_res[df_res['status'] == 'Unstable']
-        if not unstable_runs.empty:
-            print("\n[WARNING] The following finished runs were excluded due to instability (>1% change):")
-            unstable_runs = unstable_runs.sort_values(by=['config', 'N', 'seed'])
-            for _, row in unstable_runs.iterrows():
-                print(f"  - Ver {row['config']} | N={row['N']} | Seed={row['seed']}")
-
-    # --- PROCESS ACTIVE RUNS (INFO ONLY) ---
-    if active_runs:
-        print("\n" + "="*80)
-        print(f"  ACTIVELY RUNNING ({len(active_runs)})")
-        print("="*80)
-        print(f"{'Path':<45} | {'Files':<6} | {'LastUpdate':<12} | {'AvgStep':<10}")
-        print("-" * 80)
-
-        for run in active_runs:
-            disp_path = run['path']
-            if len(disp_path) > 43: disp_path = "..." + disp_path[-40:]
-
-            last_ago = f"{run['last_seen_sec']:.1f}s"
-            avg_step = f"{run['avg_step_sec']:.1f}s"
-
-            print(f"{disp_path:<45} | {run['edges']:<6} | {last_ago:<12} | {avg_step:<10}")
-        print("-" * 80)
-
-    # --- PROCESS DEAD RUNS (DELETE OPTION) ---
-    if dead_runs:
-        print("\n" + "="*80)
-        print(f"  DEAD / INCOMPLETE RUNS DETECTED ({len(dead_runs)})")
-        print("="*80)
-        print(f"{'Path':<45} | {'Files':<6} | {'LastUpdate':<12} | {'AvgStep':<10}")
-        print("-" * 80)
-
-        for run in dead_runs:
-            # Shorten path for display
-            disp_path = run['path']
-            if len(disp_path) > 43: disp_path = "..." + disp_path[-40:]
-
-            last_ago = f"{run['last_seen_sec']:.1f}s"
-            avg_step = f"{run['avg_step_sec']:.1f}s"
-
-            print(f"{disp_path:<45} | {run['edges']:<6} | {last_ago:<12} | {avg_step:<10}")
-
-        print("-" * 80)
-
-        # Interactive Deletion
-        ans = input(f"\n>> Do you want to DELETE these {len(dead_runs)} DEAD folders? (y/n): ").strip().lower()
-        if ans == 'y':
-            print("   Deleting (including parent seed folder)...")
-            for run in dead_runs:
-                try:
-                    # run['path'] is '.../S1000/data'. We delete the S1000 folder.
-                    seed_dir = os.path.dirname(run['path'])
-                    shutil.rmtree(seed_dir)
-                    print(f"   Deleted: {seed_dir}")
-                except Exception as e:
-                    print(f"   Error deleting {seed_dir}: {e}")
-            print("   Cleanup complete.")
+        if is_complete:
+            if slices:
+                for s in slices:
+                    completed_results.append({'config': label, 'N': meta[0], 'seed': meta[1], 'slice': s['slice_lbl'], 'stats': s})
         else:
-            print("   Skipping deletion.")
+            active_runs.append({'config': label, 'N': meta[0], 'seed': meta[1], 'step': last_step})
+
+    # --- TABLE PRINTING: COMPLETED RUNS ---
+    print(f"COMPLETED RUNS (Stable) - Aggregated Report")
+    print("-" * 148)
+    print(f"{'Version':<8} | {'N':<6} | {'Slice':<5} | {'Seeds':<5} | {'Steps (Avg)':<11} | {'<k> ± σ':<11} | {'Min':<5} | {'Max':<5} | {'Distribution':<25} | {'Triangles':<9} | {'Haus.'}")
+    print("-" * 148)
+
+    df_res = pd.DataFrame(completed_results)
+    if not df_res.empty:
+        grouped = df_res.groupby(['config', 'N', 'slice'])
+
+        def sort_key(k):
+            ver, n, slc = k
+            slc_val = int(slc.replace('%', ''))
+            return (ver, n, slc_val)
+
+        keys = sorted(list(grouped.groups.keys()), key=sort_key)
+
+        for key in keys:
+            cfg, n_val, slc = key
+            group = grouped.get_group(key)
+
+            seed_count = group['seed'].nunique()
+            stats = [r['stats'] for _, r in group.iterrows()]
+
+            avg_step = np.mean([s['step'] for s in stats])
+            if avg_step > 1_000_000: step_str = f"{avg_step/1_000_000:.2f}M"
+            else: step_str = f"{avg_step/1_000:.1f}K"
+
+            k_mean = np.mean([s['mean_degree'] for s in stats])
+            k_std = np.mean([s.get('std_degree',0) for s in stats])
+
+            hist_vals = [np.mean([s.get(f'bin_{i}',0) for s in stats]) for i in range(1,6)]
+            hist_str = ":".join([f"{v:.0f}" for v in hist_vals])
+
+            print(f"{cfg:<8} | {n_val:<6} | {slc:<5} | {seed_count:<5} | {step_str:<11} | {f'{k_mean:.2f}±{k_std:.2f}':<11} | {np.mean([s.get('min_degree',0) for s in stats]):<5.1f} | {np.mean([s.get('max_degree',0) for s in stats]):<5.1f} | {hist_str:<25} | {np.mean([s['triangles'] for s in stats]):<9.0f} | {np.mean([s.get('hausdorff',0) for s in stats]):.2f}")
+
+            if slc == "100%": print("-" * 148)
+    else:
+        print("   No completed runs found.")
+
+    # --- RECENT ACTIVITY: INCOMPLETE RUNS ---
+    print("\n\nRECENT ACTIVITY (Active / Unstabilized Runs)")
+    print("-" * 60)
+    print(f"{'Config':<15} | {'Seed':<8} | {'Last Snapshot Step'}")
+    print("-" * 60)
+
+    if active_runs:
+        active_runs.sort(key=lambda x: (x['config'], x['N'], x['seed']))
+        for r in active_runs:
+            cfg_str = f"{r['config']} N{r['N']}"
+            step_disp = f"{r['step']:,}" if r['step'] > 0 else "Initializing..."
+            print(f"{cfg_str:<15} | {r['seed']:<8} | {step_disp}")
+    else:
+        print("   No active runs.")
 
     print("\n[DONE]")
 

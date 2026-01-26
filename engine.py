@@ -35,7 +35,7 @@ class PhysicsEngine:
             0.35,   # 12: THETA_STEP
             0.9999, # 13: TEMP_SCALE
             0.01,   # 14: MU_DEG2
-            0.85    # 15: P_TRIADIC_TOGGLE
+            0.99    # 15: P_TRIADIC_TOGGLE
         ], dtype=np.float64)
 
     @property
