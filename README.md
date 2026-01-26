@@ -42,7 +42,9 @@ Oh no, that TL;DR ended up being a lie ;( (sorry, oops)
 
 <img width="6000" height="5100" alt="E1_N12800_S1000_i000_000_000_k0 000" src="https://github.com/user-attachments/assets/19ac927c-e9f1-4203-8bcc-8c2310fed2b6" />
 
-I will subtitle/elaborate later. There's much happening here. So much to do. So much to wait as well. Patience with the hardware, be reasonbly gentle.
+I will subtitle/elaborate later. There's much happening here. So much to do. So much to wait as well.
+
+Patience with the hardware, be reasonbly gentle. Don't let her get too hot. You'd destroy all structure.
 
 <img width="6000" height="5100" alt="E1_N12800_S1000_i000_100_000_k0 007" src="https://github.com/user-attachments/assets/aa1f6e50-6d6f-4c62-b4c2-2ea90512ac57" />
 
@@ -55,6 +57,8 @@ I will subtitle/elaborate later. There's much happening here. So much to do. So 
 <img width="6000" height="5100" alt="E1_N12800_S1000_i018_500_000_k4 500" src="https://github.com/user-attachments/assets/404b6f08-6e9d-43e0-92b9-4928622ac5a9" />
 
 <img width="6000" height="5100" alt="E1_N12800_S1000_i024_700_000_k7 392" src="https://github.com/user-attachments/assets/3d7db9bc-9482-4269-bfed-68d2769aed24" />
+
+<img width="6000" height="5100" alt="E1_N12800_S1000_i030_900_000_k9 543" src="https://github.com/user-attachments/assets/5ad98425-648b-4369-8089-5e33b44581b8" />
 
 <img width="6000" height="5100" alt="E1_N12800_S1000_i037_100_000_k10 795" src="https://github.com/user-attachments/assets/d1f5aaa0-60cd-40bf-91bc-b270b5809948" />
 
