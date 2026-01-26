@@ -178,9 +178,16 @@ def enhance_run(args):
         return
 
     # 2. CALCULATE PARAMETERS
-    total_sim_steps = args.nodes * args.ratio
+    # FIX: Do not calculate based on ratio. Detect actual simulation bounds from disk.
+    max_step = find_max_step(data_dir, args.version, args.nodes, args.seed)
 
-    # Calculate Cutoff Step
+    if max_step == 0:
+        print(f"Error: No existing data found (Max Step = 0). Cannot enhance an empty run.")
+        return
+
+    total_sim_steps = max_step
+
+    # Calculate Cutoff Step based on existing data
     window_pct = max(0.0, min(100.0, args.window)) / 100.0
     cutoff_step = int(total_sim_steps * window_pct)
 
@@ -197,11 +204,15 @@ def enhance_run(args):
         pct = (user_res - 1.0) / 99.0
         target_total_frames = int(min_frames + (max_frames - min_frames) * pct)
 
+    # Safety div check
+    if target_total_frames <= 0: target_total_frames = 1
+
     target_stride = max(1, int(total_sim_steps / target_total_frames))
 
     print(f"==================================================")
     print(f"ENHANCING RESOLUTION")
     print(f"Target:     E{args.version} | N={args.nodes} | Seed={args.seed}")
+    print(f"Range:      Existing Data Max Step: {drive.fmt_step(total_sim_steps)}")
     print(f"Window:     First {args.window}% (Steps 0 - {drive.fmt_step(cutoff_step)})")
     print(f"Resolution: {user_res:.1f}/100")
     print(f"Stride:     Save every {target_stride} steps")
@@ -281,7 +292,6 @@ def main():
         parser.add_argument("-N", "--nodes", type=int, default=drive.DEFAULT_N)
         parser.add_argument("-s", "--seed", type=int, default=drive.DEFAULT_SEED)
         parser.add_argument("-v", "--version", type=int, required=True)
-        parser.add_argument("-R", "--ratio", type=int, default=drive.DEFAULT_RATIO)
         parser.add_argument("-r", "--resolution", type=float, default=20.0)
         parser.add_argument("-w", "--window", type=float, default=25.0)
         args = parser.parse_args()
