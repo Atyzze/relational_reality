@@ -26,7 +26,9 @@ Observe the surface area of the bottom right projection and compare the first sl
 
 We identify multiple phase transitions on an initially always rising k_mean that overshoots 12 and then converges back to 12 from above. The network seems to encourage light hub behavior, diversity appears to help the network maintain global coherence while automatically self healing from sudden disconnects/damage/outages.. . or it's really just an expression of these 12 spheres ganging up on the central "hub" touching all 12 while they themselves have less connections, thus creating the 'hub'-like-spread of amount of neighbors. k_max so far does seem to scale up together with N size, but the convergence back to an average of 12 is seen accross all seeds & sizes. Unless I of course fiddle too much with the physics in engine.py, then it'll break and either no connections at all ever form, or, too many form and everything is connected to everything and you never get geometry which seems to thrive in the space in between. The current mechanism as documented here, seems to have found a stable in between these two extremes, with a lot of emergent geometry that was not explicitly programmed in, consistently forming the same shapes, every run, no matter what seed/size/scale of the universe I try out. The phases are all there. Reality seems to favor stability, and that structure is presented here, is demonstrated to arise naturally from pure chaos/randomness, the tiniest possible wiggles
 
-this is evidently a work in progresSs—~𓆙𓂀 (needs more rainbows/bright-colors and better ETA predictions for proper batch management)
+this is evidently a work in progresSs—~𓆙𓂀 
+
+(needs more rainbows/bright-colors and better ETA predictions for proper batch management)
 
 <img width="1600" height="1100" alt="mean1" src="https://github.com/user-attachments/assets/e0ad04bb-155d-46e9-a858-d6c8b0f8e0c4" />
 
