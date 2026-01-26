@@ -10,7 +10,7 @@ def run_cmd(cmd):
     os.system(full_cmd)
 
 commands = [
-    "drive.py -N 10   -s 1000 -c 20",
+
 
     "drive.py -N 3200 -s 1000 -c 4",
     "drive.py -N 1600 -s 1000 -c 8",

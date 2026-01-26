@@ -310,5 +310,5 @@ def attempt_step(N, psi, theta_matrix, adj_matrix, params, E_tracker):
                     E_tracker[0] += delta
 
     # Cool down
-    params[0] = temp * params[13]
+    #params[0] = temp * params[13]
 
