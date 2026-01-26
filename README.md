@@ -20,6 +20,8 @@ images below take a long while to render currently, still processing deeper zoom
 
 <img width="6000" height="5100" alt="E1_N12800_S1000_i012_300_000_k2 060" src="https://github.com/user-attachments/assets/e817f2dd-3e87-45a6-a00b-0ad2a9ad70cb" />
 
+<img width="6000" height="5100" alt="E1_N12800_S1000_i018_500_000_k4 500" src="https://github.com/user-attachments/assets/404b6f08-6e9d-43e0-92b9-4928622ac5a9" />
+
 <img width="6000" height="5100" alt="E1_N12800_S1000_i024_700_000_k7 392" src="https://github.com/user-attachments/assets/3d7db9bc-9482-4269-bfed-68d2769aed24" />
 
 <img width="6000" height="5100" alt="E1_N12800_S1000_i037_100_000_k10 795" src="https://github.com/user-attachments/assets/d1f5aaa0-60cd-40bf-91bc-b270b5809948" />
