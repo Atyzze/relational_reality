@@ -6,9 +6,31 @@ the default is set to N100 and takes about a minute to calculcate on a decade ol
 
 python main.py -N 12800
 
-this is a work in progresSs—~𓆙𓂀
+main.py is legacy code at this point
 
-images below take a long while to render currently, still processing deeper zoom images to better capture all the phase transitions
+start with drive.py 
+
+on success, analyse.py
+
+then, visualize.py
+
+and there's enhance.py too of course
+
+modify engine.py to play with the physics, don't need to be able to read code, but English, yes, will eventually document every single parameter its full phase range where stable emergent geometry still self organizes & heals its universal web of connections (the entire graph)
+
+eventually get to a most optimal configuration, to push system size as high as we can get, effectively creating a liquid (dimension agnostic) digital memory substrate for later training. Have yet to start training other signals onto thus substrate, such as images, cats, and language beyond meow meow, so far, it has only been deliberate chaos injected into the system (all nodes) and let it harmonize the stress eventually over all the nodes in space, though there are of course always multiple islands seen in a specific phase where there are multiple networks not really communicating much with each other. There's a clear long globe/sphere structure to it, self organized 3d volume. Observe the surface area of the bottom right projection and compare the beginning vs the final. It's a smooth disk vs a hairy ball, a stable configuration where every node/neuron/atom connects to exactly 12 neighbors on average. We identify multiple phases based on an initially always rising k_mean that overshoots 12 and then converges to 12 from above. The network seems to encourage light hub behavior, diversity appears to help the network maintain global coherence while automatically self healing from sudden disconnects/damage/outages.. . or it's really just an expression of these 12 spheres ganging up on the central "hub" touching all 12 while they themselves have less connections
+
+this is evidently a work in progresSs—~𓆙𓂀 (needs more rainbows/bright-colors)
+
+<img width="1600" height="1100" alt="mean1" src="https://github.com/user-attachments/assets/e0ad04bb-155d-46e9-a858-d6c8b0f8e0c4" />
+
+<img width="1600" height="900" alt="mean2" src="https://github.com/user-attachments/assets/467c12e9-a6b3-4b01-8c0f-f8e8b77c6860" />
+
+images below take a long while to render (currently), still processing deeper/zoomed images to better capture and picture all the phase transitions that aren't really visible here, yet.
+
+TL;DR: The universe really seems to like the kissing number 12. How to pack many tiny energy/matter balls as efficiently as possible. To eventually be crushed by gravity into a black hole, where spacetime bends geometry, and where time becomes the 4th dimension we're all traveling through all roughly the same constant/(relative!(relational)) speed, distributed acros 4 axis resulting in a 3d experience where every higher dimensionality is experienced as an infinite amount of time slices, present, now, now now now, time. Planck time if you will. Discrete sometimes, in seconds/milliseconds/minutes, hours, days, weeks, months, years, the time scale we operate from fluctuates wildely based on our own immediate context such as age/experience + DNA & current direct circumstances. Our spawn point in space time probably started somewhere in between the first heart beat and the first breath.
+
+Oh no, that TL;DR ended up being a lie ;( (sorry, oops)
 
 <img width="6000" height="5100" alt="E1_N12800_S1000_i000_000_000_k0 000" src="https://github.com/user-attachments/assets/19ac927c-e9f1-4203-8bcc-8c2310fed2b6" />
 
