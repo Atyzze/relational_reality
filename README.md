@@ -16,7 +16,9 @@ then, visualize.py
 
 and there's enhance.py too of course
 
-modify engine.py to play with the physics, don't need to be able to read code, but English, yes, will eventually document every single parameter its full phase range where all the emergent geometry remains visible
+modify engine.py to play with the physics, don't need to be able to read code, but English, yes
+
+will eventually document every single parameter its full phase range where all the emergent geometry remains visible still
 
 this is evidently a work in progresSs—~𓆙𓂀 
 
