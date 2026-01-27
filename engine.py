@@ -32,10 +32,10 @@ class PhysicsEngine:
             0.55,   # 9: P_PSI
             0.35,   # 10: P_THETA
             0.25,   # 11: PSI_STEP
-            0.35,   # 12: THETA_STEP
-            0.9999, # 13: TEMP_SCALE
-            0.01,   # 14: MU_DEG2
-            0.99    # 15: P_TRIADIC_TOGGLE
+            0.30,   # 12: THETA_STEP
+            0,      # 13: TEMP_SCALE #legacy, moved control to driver
+            0.02,   # 14: MU_DEG2
+            0.99   # 15: P_TRIADIC_TOGGLE
         ], dtype=np.float64)
 
     @property

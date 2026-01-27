@@ -11,20 +11,17 @@ def run_cmd(cmd):
 
 commands = [
 
+    "drive.py -N 200  -c 10",
+    "drive.py -N 400  -c 10",
+    "drive.py -N 800  -c 10",
+    "drive.py -N 1600 -c 10",
 
-    "drive.py -N 3200 -s 1000 -c 4",
-    "drive.py -N 1600 -s 1000 -c 8",
-    "drive.py -N 800  -s 1000 -c 10",
-    "drive.py -N 400  -s 1000 -c 10",
-    "drive.py -N 200  -s 1000 -c 10",
-    "drive.py -N 100  -s 1000 -c 10",
 
-    "drive.py -N 3200 -s 2000 -c 4",
-    "drive.py -N 1600 -s 2000 -c 8",
-    "drive.py -N 800  -s 2000 -c 10",
-    "drive.py -N 400  -s 2000 -c 10",
-    "drive.py -N 200  -s 2000 -c 10",
-    "drive.py -N 100  -s 2000 -c 10",
+
+
+
+
+
 ]
 
 # Capture extra arguments

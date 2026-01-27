@@ -311,7 +311,7 @@ def main():
     # --- PHASE 1: UPDATE METRICS ---
     t0 = time.time()
     updated_count = 0
-    workers = max(1, os.cpu_count() - 2)
+    workers = max(1, (int)(os.cpu_count() / 2))
 
     print(f"   Calculating missing metrics for {len(all_folders)} runs (Smart Resume)...")
     with ProcessPoolExecutor(max_workers=workers) as executor:

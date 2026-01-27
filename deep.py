@@ -10,15 +10,10 @@ def run_cmd(cmd):
     os.system(full_cmd)
 
 commands = [
-    "drive.py -N 25600 -s 1000 -c 1",
-    "drive.py -N 12800 -s 1000 -c 2",
+    "drive.py -N 3200  -s 1000 -c 4",
     "drive.py -N 6400  -s 1000 -c 4",
-
-    "drive.py -N 25600 -s 2000 -c 1",
-    "drive.py -N 12800 -s 2000 -c 2",
-    "drive.py -N 6400  -s 2000 -c 4",
-
-
+    "drive.py -N 12800 -s 1000 -c 2",
+    "drive.py -N 25600 -s 1000 -c 1",
 
 
 
