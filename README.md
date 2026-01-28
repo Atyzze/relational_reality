@@ -76,7 +76,7 @@ You can modify `engine.py` to explore different regimes. The universe is control
 **3. Non-Local Interaction (`P_TRIADIC_TOGGLE`)**
 
 * How often do we allow non-local connections?
-* *Current Setting:* `0.999`. This means we allow "quantum magic" (non-local wiring) only **0.1%** of the time. This tiny fraction is critical—without it, the geometry cannot fold correctly.
+* *Current Setting:* `0.999`. This means we allow "quantum magic" (non-local wiring) only **0.1%** of the time. This tiny fraction is critical, without it, no geometry can ever spawn, it needs connection between at least 2 distinct different points/nodes.
 
 ---
 
@@ -96,6 +96,37 @@ There is much more to discover here than one person can compute.
 * If you want to help map the phase diagram...
 
 *Evidently a work in progresSs—~𓆙𓂀*
+
+<img width="3000" height="2550" alt="E14_N51200_S1000_i000_000_000_k0 000" src="https://github.com/user-attachments/assets/e896d5ab-08eb-470e-9b22-e3495a6405d2" />
+
+<img width="3000" height="2550" alt="E14_N51200_S1000_i000_300_000_k0 048" src="https://github.com/user-attachments/assets/fb50cf47-6fa1-43b4-b9f8-879397a19f47" />
+
+<img width="3000" height="2550" alt="E14_N51200_S1000_i002_000_000_k0 322" src="https://github.com/user-attachments/assets/b8e3e75d-1370-4726-b530-596d4fbb6799" />
+
+<img width="3000" height="2550" alt="E14_N51200_S1000_i002_900_000_k0 476" src="https://github.com/user-attachments/assets/f6ddcdaf-97a7-41b4-b4bd-8208f5b96b4e" />
+
+<img width="3000" height="2550" alt="E14_N51200_S1000_i004_500_000_k0 739" src="https://github.com/user-attachments/assets/32bdb0b8-362c-441c-b844-ef7f7330a972" />
+
+<img width="3000" height="2550" alt="E14_N51200_S1000_i004_900_000_k0 801" src="https://github.com/user-attachments/assets/5b911764-f981-4c75-aa7a-abf25b20c4e3" />
+
+<img width="3000" height="2550" alt="E14_N51200_S1000_i006_600_000_k1 058" src="https://github.com/user-attachments/assets/246e82fa-3c59-47a1-b663-24de9e950fa4" />
+
+<img width="3000" height="2550" alt="E14_N51200_S1000_i009_300_000_k1 383" src="https://github.com/user-attachments/assets/366af857-0eb0-422b-a418-8182d3f48277" />
+
+<img width="3000" height="2550" alt="E14_N51200_S1000_i009_500_000_k1 406" src="https://github.com/user-attachments/assets/749b682b-920d-4381-984d-8022b93cb084" />
+
+<img width="3000" height="2550" alt="E14_N51200_S1000_i009_600_000_k1 418" src="https://github.com/user-attachments/assets/a5c33e44-5bed-4865-b5a2-91f46afad9cf" />
+
+<img width="3000" height="2550" alt="E14_N51200_S1000_i012_400_000_k1 665" src="https://github.com/user-attachments/assets/b595ae64-e8ac-4b2e-a43f-f4356aabf76c" />
+
+<img width="3000" height="2550" alt="E14_N51200_S1000_i015_700_000_k1 862" src="https://github.com/user-attachments/assets/d16b1dcc-2a86-42dc-9c9a-e3d2369b2ad3" />
+
+<img width="3000" height="2550" alt="E14_N51200_S1000_i019_300_000_k1 996" src="https://github.com/user-attachments/assets/ac1f71ad-ce8b-4abf-8338-ae57a9e337a6" />
+
+<img width="3000" height="2550" alt="E14_N51200_S1000_i021_100_000_k2 039" src="https://github.com/user-attachments/assets/adcb09a5-7d42-4c6c-902c-589f457010e8" />
+
+<img width="3000" height="2550" alt="E14_N51200_S1000_i023_000_000_k2 076" src="https://github.com/user-attachments/assets/a324daf5-e0c0-4a9a-97eb-0107cf5760a2" />
+
 
 
 
