@@ -2,7 +2,9 @@
 
 **An active research project simulating the emergence of geometry from random networks.**
 
-This engine simulates a "Hamiltonian Routing" dynamic where nodes actively rewire themselves to minimize local stress. We are mapping the phase transitions that occur when simple local rules give rise to complex global structures.
+This engine simulates a "Hamiltonian Routing" dynamic where nodes actively rewire themselves to minimize local stress.
+
+We are mapping the phase transitions that occur when simple local rules give rise to complex global structures.
 
 ### ⚡ Quick Start
 
