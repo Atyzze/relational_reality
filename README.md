@@ -1,32 +1,104 @@
+# Relational Reality: a network evolution engine
+
+**An active research project simulating the emergence of geometry from random networks.**
+
+This engine simulates a "Hamiltonian Routing" dynamic where nodes actively rewire themselves to minimize local stress. We are mapping the phase transitions that occur when simple local rules give rise to complex global structures.
+
+### ⚡ Quick Start
+
+**1. Install Dependencies**
+
+```bash
 pip install -r requirements.txt
 
-python main.py 
+```
 
-the default is set to N100 and takes about a minute to calculcate on a decade old budget laptop
+**2. System Check (`main.py`)**
+Run a quick performance test. This does **not** save graph state.
 
-python main.py -N 12800 (if you want bigger)
+```bash
+python main.py
 
-main.py is legacy code at this point though
+```
 
-start with drive.py instead if you want to be able to load/evolve/store graph states, test multiple engines/physics at the same time
+* *Default:* `N=100` (Calculates in ~1 min on older hardware).
+* *High Res:* `python main.py -N 1000` (Expect longer wait times, but more pixels).
 
-on success, analyse.py to compare the results, and even better use watch -n 1 python bench1.py for real time analysis of all the ongoing runs
+---
 
-then, visualize.py any seed you want
+### 🧬 Core Workflow
 
-and there's enhance.py too of course if you want to zoom in a specific window
+**1. Start the Simulation (`drive.py`)**
+This is the main driver. It evolves the topology, finding equilibrium states and storing progress.
 
-modify engine.py to play with the physics, don't need to be able to read code, but English, yes
+```bash
+python drive.py
 
-will eventually document every single parameter its full phase range where all the emergent geometry remains visible still
+```
 
-like, how often do we allow non local connection? it can't be 0 because then no connection of any kind would ever be possible
+**2. Watch it Evolve**
+Get immediate feedback on system performance in a separate terminal:
 
-it also can't be happening 100% of the time, then locality/geometry wouldn't be possible, things are distinct in their 'distance' between each other
+```bash
+watch -n 1 python bench1.py
 
-so what is the ideal % then where we allow for quantum magic? this is the P_TRIADIC_TOGGLE parameter, currently 
+```
 
-this is evidently a work in progresSs—~𓆙𓂀 
+**3. Visualize & Analyse**
+
+* **`visualize.py`**: Renders frames from the simulation history to visualize phase transitions.
+* **`analyse.py`**: Tallies results to identify trends across parameter regimes.
+* **`enhance.py`**: High-resolution zoom for specific windows.
+
+---
+
+### 🔬 Key Findings (So Far)
+
+We have swept the system size from **N=100** up to **N=51,000+** and identified multiple stable topological phases.
+
+* **Scale Invariance:** The emergent behavior appears identical regardless of size. The only difference is the pixel density; the transitions and geometry remain consistent.
+* **Integer Thresholds:** Interesting physics emerge specifically when the average connection count () breaches certain integer values.
+
+### ⚙️ The Physics (Parameters)
+
+You can modify `engine.py` to explore different regimes. The universe is controlled by three primary knobs:
+
+**1. System Size (`N`)**
+
+* Range: `100` to `51,200+`.
+* *Warning:* Going below `N=100` is untested. You may encounter "Unstable Universes" where the simulation never stabilizes (never triggers the exit condition) and runs forever. If this happens, `Ctrl+C` is your friend.
+
+**2. The Connection Cost (`mu`)**
+
+* A single parameter that controls network density.
+* **High `mu**`: High pressure against connections.
+* **Low `mu**`: Connections are cheap; the network becomes dense.
+* *Observation:* Increasing `mu` suppresses the K-mean (average degree). We are currently mapping exactly what happens as `mu` forces  across integer boundaries.
+
+**3. Non-Local Interaction (`P_TRIADIC_TOGGLE`)**
+
+* How often do we allow non-local connections?
+* *Current Setting:* `0.999`. This means we allow "quantum magic" (non-local wiring) only **0.1%** of the time. This tiny fraction is critical—without it, the geometry cannot fold correctly.
+
+---
+
+### 🌍 Relevance for 2026
+
+Why simulate this? As we move toward massive decentralized systems, mesh networks, and bio-mimetic AI, understanding how **stability emerges from chaos** is critical. This project demonstrates how robust, self-healing architectures can arise naturally from simple energy minimization rules, without a central architect.
+
+---
+
+### 🤝 Call for Collaboration
+
+**This is an invitation.**
+There is much more to discover here than one person can compute.
+
+* If you have the compute power to render high-N frames...
+* If you can optimize the engine for efficiency...
+* If you want to help map the phase diagram...
+
+*Evidently a work in progresSs—~𓆙𓂀*
+
 
 <img width="3000" height="2550" alt="E14_N51200_S1000_i003_000_000_k0 493" src="https://github.com/user-attachments/assets/d5233129-fc72-4dfa-863a-e91dcbde746f" />
 
