@@ -66,6 +66,8 @@ We have swept the system size up to **N=51200** and identified multiple stable t
 You can modify `engine.py` to explore different regimes. The universe is controlled by three primary knobs:
 
 **1. System Size (`N`)**
+
+
 **2. The Connection Cost (`mu`)**
 
 * A single parameter that controls network density.
