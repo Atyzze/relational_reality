@@ -105,8 +105,6 @@ There is much more to discover here than one person can compute.
 
 <img width="3000" height="2550" alt="E14_N51200_S1000_i002_000_000_k0 322" src="https://github.com/user-attachments/assets/b8e3e75d-1370-4726-b530-596d4fbb6799" />
 
-<img width="3000" height="2550" alt="E14_N51200_S1000_i002_900_000_k0 476" src="https://github.com/user-attachments/assets/f6ddcdaf-97a7-41b4-b4bd-8208f5b96b4e" />
-
 <img width="3000" height="2550" alt="E14_N51200_S1000_i004_500_000_k0 739" src="https://github.com/user-attachments/assets/32bdb0b8-362c-441c-b844-ef7f7330a972" />
 
 <img width="3000" height="2550" alt="E14_N51200_S1000_i004_900_000_k0 801" src="https://github.com/user-attachments/assets/5b911764-f981-4c75-aa7a-abf25b20c4e3" />
