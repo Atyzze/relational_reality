@@ -73,7 +73,7 @@ You can modify `engine.py` to explore different regimes. The universe is control
 * A single parameter that controls network density.
 * **High** `mu`: High pressure against connections.
 * **Low** `mu`: Connections are cheap; the network becomes dense.
-* *Observation:* Increasing `mu` suppresses the K-mean (average degree). We are currently mapping exactly what happens as `mu` forces  across integer boundaries.
+* *Observation:* Increasing `mu` suppresses the K-mean (average degree). We are currently mapping exactly what happens as `mu` forces K-mean across integer boundaries.
 
 **3. Non-Local Interaction (`P_TRIADIC_TOGGLE`)**
 
