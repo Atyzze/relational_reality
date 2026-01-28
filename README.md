@@ -4,33 +4,47 @@ python main.py
 
 the default is set to N100 and takes about a minute to calculcate on a decade old budget laptop
 
-python main.py -N 12800
+python main.py -N 12800 (if you want bigger)
 
-main.py is legacy code at this point
+main.py is legacy code at this point though
 
-start with drive.py 
+start with drive.py instead if you want to be able to load/evolve/store graph states, test multiple engines/physics at the same time
 
-on success, analyse.py
+on success, analyse.py to compare the results, and even better use watch -n 1 python bench1.py for real time analysis of all the ongoing runs
 
-then, visualize.py
+then, visualize.py any seed you want
 
-and there's enhance.py too of course
+and there's enhance.py too of course if you want to zoom in a specific window
 
 modify engine.py to play with the physics, don't need to be able to read code, but English, yes
 
 will eventually document every single parameter its full phase range where all the emergent geometry remains visible still
 
+like, how often do we allow non local connection? it can't be 0 because then no connection of any kind would ever be possible
+
+it also can't be happening 100% of the time, then locality/geometry wouldn't be possible, things are distinct in their 'distance' between each other
+
+so what is the ideal % then where we allow for quantum magic? this is the P_TRIADIC_TOGGLE parameter, currently 
+
 this is evidently a work in progresSs—~𓆙𓂀 
 
-<img width="3000" height="2550" alt="E14_N51200_S1000_i000_000_000_k0 000" src="https://github.com/user-attachments/assets/2889c681-b9d5-4524-b54f-b0dd28936efd" />
-<img width="3000" height="2550" alt="E14_N51200_S1000_i000_300_000_k0 048" src="https://github.com/user-attachments/assets/c1e16a46-4e62-4717-9f69-96920b743a2f" />
-<img width="3000" height="2550" alt="E14_N51200_S1000_i000_500_000_k0 080" src="https://github.com/user-attachments/assets/9ac4d792-cc24-4e54-9e35-f386e82ecd99" />
-<img width="3000" height="2550" alt="E14_N51200_S1000_i002_100_000_k0 338" src="https://github.com/user-attachments/assets/e6f9eafe-16fb-4b60-8e94-42bbea569d8a" />
-<img width="3000" height="2550" alt="E14_N51200_S1000_i003_200_000_k0 526" src="https://github.com/user-attachments/assets/6ad8a47f-9c48-4c10-a87c-91c0a08ad574" />
-<img width="3000" height="2550" alt="E14_N51200_S1000_i003_700_000_k0 607" src="https://github.com/user-attachments/assets/82720624-3607-45ec-9c5e-4f32b6de0ac8" />
-<img width="3000" height="2550" alt="E14_N51200_S1000_i004_800_000_k0 786" src="https://github.com/user-attachments/assets/13128dc7-81a5-48d5-b616-f8cc085b9818" />
-<img width="3000" height="2550" alt="E14_N51200_S1000_i005_400_000_k0 880" src="https://github.com/user-attachments/assets/4adc56bb-ad2e-49fa-aa5d-5deae21b1d00" />
-<img width="3000" height="2550" alt="E14_N51200_S1000_i005_900_000_k0 954" src="https://github.com/user-attachments/assets/626e93b6-24b7-4639-b980-f82947cf4ef6" />
-<img width="3000" height="2550" alt="E14_N51200_S1000_i006_500_000_k1 043" src="https://github.com/user-attachments/assets/890dd0ff-d909-4425-bffe-bddc8ef8ed16" />
-<img width="3000" height="2550" alt="E14_N51200_S1000_i008_100_000_k1 251" src="https://github.com/user-attachments/assets/bf949a49-801b-4f60-b718-4a1006e13441" />
-<img width="3000" height="2550" alt="E14_N51200_S1000_i008_700_000_k1 321" src="https://github.com/user-attachments/assets/55fddbec-f432-4c22-ab6f-800706332f4d" />
+<img width="3000" height="2550" alt="E14_N51200_S1000_i003_000_000_k0 493" src="https://github.com/user-attachments/assets/d5233129-fc72-4dfa-863a-e91dcbde746f" />
+
+<img width="3000" height="2550" alt="E14_N51200_S1000_i003_900_000_k0 637" src="https://github.com/user-attachments/assets/8dcd757e-ab21-4dc7-986e-c62f3d2aff79" />
+
+<img width="3000" height="2550" alt="E14_N51200_S1000_i004_000_000_k0 654" src="https://github.com/user-attachments/assets/f93cf4d5-9110-41f1-b23d-f5de54d5f525" />
+
+<img width="3000" height="2550" alt="E14_N51200_S1000_i009_100_000_k1 363" src="https://github.com/user-attachments/assets/101a0bd4-6bc9-4c1b-82fa-cf622655b551" />
+
+<img width="3000" height="2550" alt="E14_N51200_S1000_i009_300_000_k1 383" src="https://github.com/user-attachments/assets/2b973013-46d5-4b78-b4eb-b5f329f162e6" />
+
+<img width="3000" height="2550" alt="E14_N51200_S1000_i009_500_000_k1 406" src="https://github.com/user-attachments/assets/26dac3ad-6832-4fa7-8cae-4f477c4071b4" />
+
+<img width="3000" height="2550" alt="E14_N51200_S1000_i012_400_000_k1 665" src="https://github.com/user-attachments/assets/ba5f137e-3eb2-4d67-b910-7edb4bc74582" />
+
+<img width="3000" height="2550" alt="E14_N51200_S1000_i015_700_000_k1 862" src="https://github.com/user-attachments/assets/0684a668-a99b-473b-b334-b4e687da71f2" />
+
+<img width="3000" height="2550" alt="E14_N51200_S1000_i021_100_000_k2 039" src="https://github.com/user-attachments/assets/23d4aec1-e02a-4304-98e9-9dc373837cf2" />
+
+<img width="3000" height="2550" alt="E14_N51200_S1000_i023_000_000_k2 076" src="https://github.com/user-attachments/assets/b906c70e-f952-43a4-a881-443d0d15506a" />
+
