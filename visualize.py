@@ -1,87 +1,135 @@
 import os
-import sys
-import re
-import glob
-import warnings
-import argparse
-import platform
-import subprocess
-import threading
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+os.environ["NUMBA_NUM_THREADS"] = "1"
+
+import sys, re, glob, warnings, argparse, platform, subprocess, time, shutil, math
 from collections import deque
 from multiprocessing import Pool, cpu_count
-
+from datetime import datetime
 from tqdm import tqdm
 import numpy as np
 import pandas as pd
 import networkx as nx
 import matplotlib.pyplot as plt
+from matplotlib.ticker import MaxNLocator
 from scipy.sparse.csgraph import shortest_path
+import scipy.sparse.linalg
 
 # --- CONFIGURATION ---
-RUNS_DIR = "runs"
+RUNS_DIR = "data"
 SEED_FIXED = 42
 GLOBAL_CMAP = "viridis"
+DEFAULT_K_THRESHOLD = 0.01
 
-# --- TEMPORAL STABILITY CONFIG ---
-ENABLE_PROCRUSTES_ALIGNMENT = True
+# ==========================================
+#        PHYSICS & MATH HELPERS (FROM v0.py)
+# ==========================================
 
-# If enabled, applies "camera inertia": blends current alignment with previous alignment transform
-# to reduce sudden global rotations between frames.
-ENABLE_CAMERA_INERTIA = True
-# 0.0 = no smoothing (immediate), 0.9 = very smooth/laggy
-INERTIA_ALPHA = 0.80
+def compute_node_frustration(G, nodes_ordered):
+    """
+    Calculates the 'geometric stress' (curl) for each node.
+    """
+    node_stress = {n: 0.0 for n in nodes_ordered}
+    node_counts = {n: 0 for n in nodes_ordered}
+    edge_thetas = {}
+    for u, v, d in G.edges(data=True):
+        th = d.get('theta', 0.0)
+        edge_thetas[(u, v)] = th
+        edge_thetas[(v, u)] = th
 
-# Cache directory inside each run's renders folder
-PROCRUSTES_CACHE_DIRNAME = ".align_cache"
-MIN_SHARED_NODES_FOR_ALIGNMENT = 20
+    processed_triangles = set()
+    for u in G.nodes():
+        nbrs = list(G.neighbors(u))
+        for i in range(len(nbrs)):
+            for j in range(i + 1, len(nbrs)):
+                v, w = nbrs[i], nbrs[j]
+                if G.has_edge(v, w):
+                    tri_key = tuple(sorted((u, v, w)))
+                    if tri_key in processed_triangles: continue
+                    processed_triangles.add(tri_key)
 
-# --- SPREADING / PREVIEW CONFIG ---
-# Enables the "two lanes" render: forward-aligned + spread-preview concurrently.
-ENABLE_DUAL_LANE_RENDER = True
+                    t_uv = edge_thetas.get((u, v), 0.0)
+                    t_vw = edge_thetas.get((v, w), 0.0)
+                    t_wu = edge_thetas.get((w, u), 0.0)
 
-# How many "spread" frames to render ASAP (BSP order). Set None to render all missing.
-SPREAD_MAX_FRAMES = 250
+                    best_stress = 1.0
+                    for s1 in [1, -1]:
+                        for s2 in [1, -1]:
+                            for s3 in [1, -1]:
+                                sum_th = s1*t_uv + s2*t_vw + s3*t_wu
+                                stress = 1.0 - math.cos(2*sum_th)
+                                if stress < best_stress: best_stress = stress
 
-# In aligned-forward lane: if PNG already exists but cache is missing, compute + write cache,
-# but skip writing the PNG to save time.
-ALIGNED_FORWARD_SKIP_PNG_IF_EXISTS = True
+                    node_stress[u] += best_stress; node_counts[u] += 1
+                    node_stress[v] += best_stress; node_counts[v] += 1
+                    node_stress[w] += best_stress; node_counts[w] += 1
 
+    result = []
+    for n in nodes_ordered:
+        c = node_counts[n]
+        if c > 0: result.append(node_stress[n] / c)
+        else: result.append(0.0)
+    return np.array(result)
 
-# --- FAST MDS / LMDS ---
+def compute_integrated_phase(G, nodes_ordered):
+    N = len(nodes_ordered)
+    node_to_idx = {n: i for i, n in enumerate(nodes_ordered)}
+    phases = np.zeros(N, dtype=float)
+    visited = np.zeros(N, dtype=bool)
+
+    for start_node in nodes_ordered:
+        start_idx = node_to_idx[start_node]
+        if visited[start_idx]: continue
+        queue = deque([start_node])
+        visited[start_idx] = True
+        phases[start_idx] = 0.0
+        while queue:
+            u = queue.popleft()
+            u_idx = node_to_idx[u]
+            u_phi = phases[u_idx]
+            for v in G.neighbors(u):
+                v_idx = node_to_idx[v]
+                if not visited[v_idx]:
+                    edge_theta = G[u][v].get('theta', 0.0)
+                    phases[v_idx] = u_phi + edge_theta
+                    visited[v_idx] = True
+                    queue.append(v)
+    return (phases + math.pi) % (2 * math.pi) - math.pi
+
+# ==========================================
+#          LAYOUT & VISUALIZATION
+# ==========================================
 
 class FastMDS:
-    """
-    Landmark MDS (LMDS) approximation to classical MDS on graph geodesic distances.
-    Returns embedding + landmark-kernel eigen spectrum for explained-variance diagnostics.
-    """
-    def __init__(self, n_components=2, n_landmarks=150, seed=42):
+    """ Landmark MDS approximation for faster layout calculation. """
+    def __init__(self, n_components=2, n_landmarks=100, seed=42):
         self.n_components = n_components
         self.n_landmarks = n_landmarks
         self.seed = seed
 
     def fit_transform(self, adj_matrix, N):
         rng = np.random.RandomState(self.seed)
-
         actual_k = min(N, self.n_landmarks)
         landmarks = rng.choice(N, size=actual_k, replace=False)
         landmarks.sort()
 
         D_L = shortest_path(adj_matrix, method='D', directed=False, indices=landmarks)
-
         finite = np.isfinite(D_L)
         if not np.any(finite):
-            embedding = np.zeros((N, self.n_components), dtype=float)
-            meta = {"landmarks": actual_k, "eigvals_all": np.zeros(actual_k, dtype=float)}
-            return embedding, meta
+            return np.zeros((N, self.n_components), dtype=float), {"eigvals_all": []}
 
         max_dist = np.nanmax(D_L[finite])
-        if not np.isfinite(max_dist) or max_dist <= 0:
-            max_dist = 1.0
+        if max_dist == 0:
+             return np.zeros((N, self.n_components), dtype=float), {"eigvals_all": np.zeros(actual_k)}
+        if not np.isfinite(max_dist) or max_dist <= 0: max_dist = 1.0
         D_L[~finite] = max_dist * 1.5
 
         D_L_sq = D_L ** 2
-        D_LL_sq = D_L_sq[:, landmarks]  # (k, k)
-
+        D_LL_sq = D_L_sq[:, landmarks]
         n = actual_k
         J = np.eye(n) - np.ones((n, n)) / n
         B = -0.5 * J @ D_LL_sq @ J
@@ -89,813 +137,632 @@ class FastMDS:
         eigvals, eigvecs = np.linalg.eigh(B)
         idx = np.argsort(eigvals)[::-1]
         eigvals_sorted = eigvals[idx]
-        eigvecs_sorted = eigvecs[:, idx]
 
         eigvals_top = eigvals_sorted[:self.n_components]
-        eigvecs_top = eigvecs_sorted[:, :self.n_components]
+        eigvecs_top = eigvecs[:, idx][:, :self.n_components]
 
         L_k = eigvecs_top * np.sqrt(np.maximum(eigvals_top, 1e-9))
-        L_k_pinv = np.linalg.pinv(L_k)
+        embedding = -0.5 * (np.linalg.pinv(L_k) @ (D_L_sq - np.mean(D_LL_sq, axis=1, keepdims=True)))
+        return embedding.T, {"eigvals_all": eigvals_sorted}
 
-        row_means = np.mean(D_LL_sq, axis=1, keepdims=True)
-        D_centered = D_L_sq - row_means
+# --- LAYOUT HELPERS ---
+def stabilize_array(pos_array, ignored_arg=None):
+    """
+    Flips axes deterministically based on the 'Pole' (Max Absolute Value).
+    This is much more stable than anchoring to Node 0.
+    """
+    if pos_array.shape[0] == 0: return pos_array
 
-        embedding = -0.5 * (L_k_pinv @ D_centered)  # (d, N)
-        embedding = embedding.T  # (N, d)
+    multipliers = []
+    for d in range(pos_array.shape[1]):
+        # Find the node with the strongest signal (furthest from 0) in this dimension
+        # This is the "Tip" of the shape.
+        col = pos_array[:, d]
+        idx_max = np.argmax(np.abs(col))
+        val_max = col[idx_max]
 
-        meta = {"landmarks": actual_k, "eigvals_all": eigvals_sorted}
-        return embedding, meta
+        # If that tip is negative, flip the whole world to make it positive.
+        multipliers.append(-1.0 if val_max < 0 else 1.0)
 
+    return pos_array * np.array(multipliers)
 
-# --- ARGUMENT PARSING ---
+def stabilize_dict(pos_dict, ignored_arg=None):
+    """Same logic for dictionary-based layouts."""
+    if not pos_dict: return pos_dict
 
-def parse_arguments():
-    parser = argparse.ArgumentParser(description="Relational Reality Visualizer V5.4 (Stable + Spread)")
+    # Convert to array for fast calc
+    nodes = sorted(pos_dict.keys())
+    arr = np.array([pos_dict[n] for n in nodes])
 
-    # Selection Mode Arguments
-    parser.add_argument("--version", type=str, help="Engine Version (e.g. '1')")
-    parser.add_argument("--N", type=int, help="System Size N (e.g. 100)")
-    parser.add_argument("--seed", type=str, help="Simulation Seed (e.g. '42')")
-    parser.add_argument("--threads", type=int, default=None, help="Number of concurrent render threads")
+    # Calculate multipliers using the array logic
+    multipliers = []
+    for d in range(arr.shape[1]):
+        col = arr[:, d]
+        idx_max = np.argmax(np.abs(col))
+        val_max = col[idx_max]
+        multipliers.append(-1.0 if val_max < 0 else 1.0)
 
-    # Worker Mode Arguments
-    parser.add_argument("--worker", action="store_true", help="Internal flag")
-    parser.add_argument("--step", type=int, help="Step")
-    parser.add_argument("--step_str", type=str, help="Step String")
-    parser.add_argument("--node_file", type=str, help="Nodes")
-    parser.add_argument("--edge_file", type=str, help="Edges")
-    parser.add_argument("--out_dir", type=str, help="Output")
+    mult_arr = np.array(multipliers)
 
-    # Worker controls
-    parser.add_argument("--no_align", action="store_true",
-                        help="Disable Procrustes alignment for this worker (preview lane).")
-    parser.add_argument("--force_cache", action="store_true",
-                        help="Compute/save alignment cache even if PNG exists (for forward lane).")
-    parser.add_argument("--skip_png_if_exists", action="store_true",
-                        help="If PNG exists, skip writing it (but still compute cache if force_cache).")
+    # Apply back to dict
+    return {n: pos * mult_arr for n, pos in pos_dict.items()}
 
-    return parser.parse_args()
+def get_dual_spectral_init(G, nodes_ordered):
+    """Calculates both dominant spectral modes (v1-v2 and v1-v3)."""
 
+    def normalize(v):
+        mn, mx = v.min(), v.max()
+        return v if mx - mn < 1e-9 else 2 * ((v - mn) / (mx - mn)) - 1
 
-# --- MENU & FILE HELPERS ---
-
-
-
-def get_subfolders(path):
-    if not os.path.exists(path):
-        return []
-    return [f for f in os.listdir(path) if os.path.isdir(os.path.join(path, f))]
-
-
-def select_option(options, prompt_text):
-    if not options:
-        print(f"No options found for: {prompt_text}")
-        return None
-    if len(options) == 1:
-        print(f">> Auto-selecting only option for {prompt_text}: {options[0]}")
-        return options[0]
-
-    print(f"\n--- {prompt_text} ---")
-    for i, opt in enumerate(options):
-        print(f"[{i+1}] {opt}")
-
-    while True:
-        try:
-            choice = input(f"Select (1-{len(options)}): ").strip()
-            idx = int(choice) - 1
-            if 0 <= idx < len(options):
-                return options[idx]
-        except ValueError:
-            pass
-        print("Invalid selection. Try again.")
-
-
-def open_file_explorer(path):
     try:
-        system = platform.system()
-        if system == "Windows":
-            os.startfile(path)
-        elif system == "Darwin":
-            subprocess.Popen(["open", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        else:
-            subprocess.Popen(["xdg-open", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception as e:
-        print(f"Could not open file explorer: {e}")
+        N = len(nodes_ordered)
+        L = nx.laplacian_matrix(G, nodelist=nodes_ordered).toarray().astype(float)
 
-def _launch_subprocess_star(payload):
-    """Pickle-safe wrapper for multiprocessing Pool."""
-    task_args, extra_args = payload
-    return launch_subprocess(task_args, extra_args=extra_args)
+        vals, vecs = scipy.linalg.eigh(L, subset_by_index=[1, 5]) //this is more strict/deterministic
+        idx = np.argsort(vals)
+        vecs = vecs[:, idx]
+        v1, v2, v3 = normalize(vecs[:, 1]), normalize(vecs[:, 2]), normalize(vecs[:, 3])
+        pos_A = np.column_stack((v1, v2))
 
-def get_rendered_steps(output_dir):
-    if not os.path.exists(output_dir):
-        return set()
-    rendered = set()
-    pattern = re.compile(rf"_i([\d_]+)_k")
-    for f in os.listdir(output_dir):
-        if f.endswith(".png"):
-            m = pattern.search(f)
-            if m:
-                rendered.add(int(m.group(1).replace('_', '')))
-    return rendered
+        vals, vecs = scipy.sparse.linalg.eigsh(L, k=min(N-1, 5), which='SM', tol=1e-3) #here we can control the range with tol being lowered towards identical result below
+        idx = np.argsort(vals)
+        vecs = vecs[:, idx]
+        v1, v2, v3 = normalize(vecs[:, 1]), normalize(vecs[:, 2]), normalize(vecs[:, 3])
 
-def _launch_subprocess_star(args):
-    """Pickle-safe helper for multiprocessing Pool."""
-    task_args, extra_args = args
-    return launch_subprocess(task_args, extra_args=extra_args)
+        pos_B = np.column_stack((v1, v2))
 
+        return {n: pos_A[i] for i, n in enumerate(nodes_ordered)}, {n: pos_B[i] for i, n in enumerate(nodes_ordered)}
+    except:
+        return None, None
 
-def smart_sample_sort(all_steps, rendered_steps):
-    # BSP-style order: first/last/mid, then recursively.
-    if not all_steps:
-        return []
-    needed_steps = [s for s in all_steps if s not in rendered_steps]
-    if not needed_steps:
-        return []
+def run_umap_layout_original(adj_mat, mean_deg, seed=42):
+    """
+    Runs UMAP directly on the adjacency matrix.
+    Handles scipy csr_array vs csr_matrix compatibility for Numba.
+    """
+    from scipy.sparse import csr_matrix
 
-    Nn = len(needed_steps)
-    all_steps_sorted = sorted(needed_steps)
-    bsp_indices = []
-    visited = set()
-    queue = deque([(0, Nn - 1)])
+    # 2. Convert 'csr_array' (NetworkX) to 'csr_matrix' (UMAP/Numba requirement)
+    if not isinstance(adj_mat, csr_matrix):
+        adj_mat = csr_matrix(adj_mat)
 
-    if Nn > 0:
-        bsp_indices.append(0); visited.add(0)
-    if Nn > 1:
-        bsp_indices.append(Nn - 1); visited.add(Nn - 1)
+    # 3. Dynamic neighbors
+    n_neighbors = int(max(2, round(mean_deg)))
+    import umap
 
-    while queue:
-        start, end = queue.popleft()
-        if end - start <= 1:
-            continue
-        mid = (start + end) // 2
-        if mid not in visited:
-            bsp_indices.append(mid); visited.add(mid)
-        queue.append((start, mid))
-        queue.append((mid, end))
+    # 4. Run UMAP
+    reducer = umap.UMAP(
+        n_neighbors=n_neighbors,
+        min_dist=0.1,
+        n_components=2,
+        metric='cosine',
+        init='spectral',
+        random_state=seed,
+        n_jobs=1,
+        force_approximation_algorithm=True
+    )
 
-    for i in range(Nn):
-        if i not in visited:
-            bsp_indices.append(i)
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=".*n_jobs*")
+        warnings.filterwarnings("ignore", message=".*Spectral initialisation failed.*")
+        embedding_2d = reducer.fit_transform(adj_mat)
 
-    return [all_steps_sorted[i] for i in bsp_indices]
-
-
-def parse_steps(data_dir, version_id, N, seed):
-    search_pattern = os.path.join(data_dir, f"E{version_id}_N{N}_S{seed}_iter_*_nodes.csv")
-    node_files = glob.glob(search_pattern)
-    data_map = {}
-    pattern = re.compile(rf"iter_([\d_]+)_nodes\.csv")
-
-    for nf in node_files:
-        match = pattern.search(nf)
-        if match:
-            step_str = match.group(1)
-            step_int = int(step_str.replace('_', ''))
-            edge_file = nf.replace("_nodes.csv", "_edges.csv")
-            if os.path.exists(edge_file):
-                data_map[step_int] = (nf, edge_file, step_str)
-    return sorted(data_map.keys()), data_map
-
-
-# --- CORE LOGIC ---
+    return embedding_2d
 
 def load_graph(node_file, edge_file):
-    try:
-        df_nodes = pd.read_csv(node_file)
-        df_nodes.columns = [c.strip().lower() for c in df_nodes.columns]
-        real_col = next((c for c in df_nodes.columns if 'real' in c or c in ('re',)), "psi_real")
-        imag_col = next((c for c in df_nodes.columns if 'imag' in c or c in ('im',)), "psi_imag")
+    # Updated to capture Theta for new color modes
+    if not os.path.exists(node_file):
+        return nx.Graph()
 
-        G = nx.Graph()
-        for _, row in df_nodes.iterrows():
-            nid = int(row.iloc[0])
-            psi = complex(row.get(real_col, 0), row.get(imag_col, 0))
-            G.add_node(nid, psi=psi, rho=abs(psi) ** 2)
+    df_nodes = pd.read_csv(node_file)
+    df_nodes.columns = [c.strip().lower() for c in df_nodes.columns]
 
+    real_col = next((c for c in df_nodes.columns if 'real' in c), "psi_real")
+    imag_col = next((c for c in df_nodes.columns if 'imag' in c), "psi_imag")
+    has_theta = 'theta' in df_nodes.columns
+
+    G = nx.Graph()
+    for _, row in df_nodes.iterrows():
+        c_val = complex(row.get(real_col, 0), row.get(imag_col, 0))
+        rho_val = abs(c_val) ** 2
+        theta_val = row['theta'] if has_theta else np.angle(c_val)
+        G.add_node(int(row.iloc[0]), rho=rho_val, theta=theta_val)
+
+    if os.path.exists(edge_file):
         df_edges = pd.read_csv(edge_file)
         if not df_edges.empty:
             df_edges.columns = [c.strip().lower() for c in df_edges.columns]
-            u_col, v_col = df_edges.columns[0], df_edges.columns[1]
-            G.add_edges_from([(int(r[u_col]), int(r[v_col])) for _, r in df_edges.iterrows()])
-
-        return G
-    except:
-        return nx.Graph()
-
-
-def stabilize_array(pos_array, anchor_idx):
-    if pos_array.shape[0] == 0:
-        return pos_array
-    dims = pos_array.shape[1]
-
-    multipliers = []
-    for d in range(dims):
-        anchor_val = pos_array[anchor_idx, d]
-        multipliers.append(-1.0 if anchor_val < 0 else 1.0)
-    pos_array = pos_array * np.array(multipliers)
-
-    if dims == 2:
-        x_val = pos_array[anchor_idx, 0]
-        y_val = pos_array[anchor_idx, 1]
-        if abs(y_val) > abs(x_val):
-            pos_array[:, [0, 1]] = pos_array[:, [1, 0]]
-    return pos_array
-
-
-def stabilize_dict(pos_dict, anchor_id):
-    if anchor_id not in pos_dict:
-        return pos_dict
-    anchor_pos = pos_dict[anchor_id]
-    dims = len(anchor_pos)
-
-    multipliers = []
-    for d in range(dims):
-        multipliers.append(-1.0 if anchor_pos[d] < 0 else 1.0)
-
-    new_pos = {}
-    for node, coords in pos_dict.items():
-        new_pos[node] = np.array(coords) * np.array(multipliers)
-
-    if dims == 2:
-        anc_x = new_pos[anchor_id][0]
-        anc_y = new_pos[anchor_id][1]
-        if abs(anc_y) > abs(anc_x):
-            for node in new_pos:
-                new_pos[node] = new_pos[node][[1, 0]]
-    return new_pos
-
-
-def explained_var(eigs, d):
-    eigs = np.array(eigs, dtype=float)
-    eigs = eigs[eigs > 1e-12]
-    if eigs.size == 0:
-        return 0.0
-    d = min(d, eigs.size)
-    return float(np.sum(eigs[:d]) / np.sum(eigs))
-
-
-# --- PROCRUSTES ALIGNMENT (ORTHOGONAL) + INERTIA ---
-
-def compute_procrustes_transform(current_coords, current_nodes, prev_coords, prev_nodes):
-    shared, idx_cur, idx_prev = np.intersect1d(current_nodes, prev_nodes, return_indices=True)
-    if shared.size < MIN_SHARED_NODES_FOR_ALIGNMENT:
-        return None
-
-    X = current_coords[idx_cur, :]
-    Y = prev_coords[idx_prev, :]
-
-    X_mean = X.mean(axis=0, keepdims=True)
-    Y_mean = Y.mean(axis=0, keepdims=True)
-
-    Xc = X - X_mean
-    Yc = Y - Y_mean
-
-    C = Xc.T @ Yc
-    U, _, Vt = np.linalg.svd(C, full_matrices=False)
-    R = U @ Vt
-
-    if np.linalg.det(R) < 0:
-        U[:, -1] *= -1
-        R = U @ Vt
-
-    mean_cur_all = current_coords.mean(axis=0, keepdims=True)
-    t_prev = Y_mean
-    return R, t_prev, mean_cur_all
-
-
-def apply_transform(coords, R, t_prev, mean_cur_all):
-    return (coords - mean_cur_all) @ R + t_prev
-
-
-def blend_rotations(R_new, R_old, alpha):
-    M = alpha * R_old + (1.0 - alpha) * R_new
-    U, _, Vt = np.linalg.svd(M, full_matrices=False)
-    R = U @ Vt
-    if np.linalg.det(R) < 0:
-        U[:, -1] *= -1
-        R = U @ Vt
-    return R
-
-
-def cache_path(cache_dir, step_int):
-    return os.path.join(cache_dir, f"step_{step_int}.npz")
-
-
-def load_prev_alignment(cache_dir, prev_step_int):
-    path = cache_path(cache_dir, prev_step_int)
-    if not os.path.exists(path):
-        return None
-    try:
-        data = np.load(path, allow_pickle=False)
-        out = {
-            "nodes": data["nodes"].astype(int),
-            "spring": data["spring"].astype(float),
-            "spec": data["spec"].astype(float),
-            "mds2": data["mds2"].astype(float),
-            "mds3": data["mds3"].astype(float),
-            "R2": data["R2"].astype(float) if "R2" in data.files else None,
-            "R3": data["R3"].astype(float) if "R3" in data.files else None,
-            "Rspec": data["Rspec"].astype(float) if "Rspec" in data.files else None,
-            "Rspring": data["Rspring"].astype(float) if "Rspring" in data.files else None,
-        }
-        return out
-    except:
-        return None
-
-
-def save_alignment(cache_dir, step_int, nodes, spring, spec, mds2, mds3, R2=None, R3=None, Rspec=None, Rspring=None):
-    os.makedirs(cache_dir, exist_ok=True)
-    path = cache_path(cache_dir, step_int)
-
-    payload = dict(
-        nodes=np.array(nodes, dtype=int),
-        spring=np.array(spring, dtype=float),
-        spec=np.array(spec, dtype=float),
-        mds2=np.array(mds2, dtype=float),
-        mds3=np.array(mds3, dtype=float),
-    )
-    if R2 is not None:
-        payload["R2"] = np.array(R2, dtype=float)
-    if R3 is not None:
-        payload["R3"] = np.array(R3, dtype=float)
-    if Rspec is not None:
-        payload["Rspec"] = np.array(Rspec, dtype=float)
-    if Rspring is not None:
-        payload["Rspring"] = np.array(Rspring, dtype=float)
-
-    try:
-        np.savez_compressed(path, **payload)
-    except:
-        pass
-
-
-# --- WORKER ---
-
-def launch_subprocess(task_args, extra_args=None):
-    step_int, node_f, edge_f, step_str, output_dir, v_id, N_val, s_id = task_args
-    cmd = [
-        sys.executable, __file__, "--worker",
-        "--version", str(v_id), "--N", str(N_val), "--seed", str(s_id),
-        "--step", str(step_int), "--step_str", str(step_str),
-        "--node_file", node_f, "--edge_file", edge_f, "--out_dir", output_dir
-    ]
-    if extra_args:
-        cmd.extend(extra_args)
-    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-    return step_int
+            # Capture edge theta if available
+            G.add_edges_from([(int(r.iloc[0]), int(r.iloc[1]), {'theta': r.get('theta', 0.0)}) for _, r in df_edges.iterrows()])
+    return G
 
 def worker_main(args):
     try:
+        # 1. Load Data
         G = load_graph(args.node_file, args.edge_file)
         N = G.number_of_nodes()
-        if N == 0:
-            return
+        if N == 0: return
 
         nodes_ordered = np.array(sorted(G.nodes()), dtype=int)
+        rhos = np.array([G.nodes[n]['rho'] for n in nodes_ordered], dtype=float)
+        degrees = np.array([G.degree(n) for n in nodes_ordered], dtype=float)
+        mean_deg = np.mean(degrees) if N > 0 else 0.0
 
-        rhos = np.array([G.nodes[int(n)].get('rho', 0.0) for n in nodes_ordered], dtype=float)
-        n_edges = G.number_of_edges()
-        mean_deg = (2.0 * n_edges / N) if N > 0 else 0.0
-        degrees = np.array([G.degree(int(n)) for n in nodes_ordered], dtype=float)
-
-        out_name = f"E{args.version}_N{args.N}_S{args.seed}_i{args.step_str}_k{mean_deg:.3f}.png"
+        out_name = f"{args.version_tag}_N{args.N}_S{args.seed}_i{args.step_str}_k{mean_deg:.4f}.png"
         out_path = os.path.join(args.out_dir, out_name)
+        if os.path.exists(out_path): return
 
-        cache_dir = os.path.join(args.out_dir, PROCRUSTES_CACHE_DIRNAME)
-        aligned_mode = (ENABLE_PROCRUSTES_ALIGNMENT and (not args.no_align))
-
-        png_exists = os.path.exists(out_path)
-        cache_exists = os.path.exists(cache_path(cache_dir, args.step))
-
-        # Early exit rules:
-        if not aligned_mode:
-            if png_exists:
-                return
-        else:
-            if png_exists and cache_exists:
-                return
-
-        np.random.seed(SEED_FIXED + args.step)
+        # 2. Calculate Layouts
+        np.random.seed(SEED_FIXED)
         anchor_id = int(nodes_ordered[0])
-        anchor_idx = 0
 
-        # --- Spring ---
-        if N < 3000:
-            raw_spring = nx.spring_layout(G, k=0.15, iterations=50, seed=SEED_FIXED)
+        # A. Spectral Dual Modes
+        spec_A, spec_B = get_dual_spectral_init(G, nodes_ordered)
+
+        spec_raw_array = np.zeros((N, 2))
+        if spec_A is not None:
+            init_main = spec_A
+            init_alt = spec_B
+            spec_raw_array = np.array([spec_A[n] for n in nodes_ordered])
+
+            # INSTEAD OF stabilize_array, rotate the whole embedding so Node 0 is at angle 0
+            anchor_angle = np.arctan2(spec_raw_array[0, 1], spec_raw_array[0, 0])
+
+            # Apply a 2D rotation matrix by -anchor_angle
+            cos_th = np.cos(-anchor_angle)
+            sin_th = np.sin(-anchor_angle)
+
+            x_rot = spec_raw_array[:, 0] * cos_th - spec_raw_array[:, 1] * sin_th
+            y_rot = spec_raw_array[:, 0] * sin_th + spec_raw_array[:, 1] * cos_th
+
+            spec_raw_array[:, 0] = x_rot
+            spec_raw_array[:, 1] = y_rot
+
+            # We still need to fix independent axis mirroring (chirality).
+            # If a second consistent node flips its Y-axis, we flip the whole Y-axis.
+            if len(nodes_ordered) > 1 and spec_raw_array[1, 1] < 0:
+                spec_raw_array[:, 1] *= -1.0
         else:
+            init_main = nx.random_layout(G, seed=SEED_FIXED)
+            init_alt = nx.random_layout(G, seed=SEED_FIXED)
+
+        # B. Spring Layouts
+        def get_spring(init_pos, iters=25):
             try:
-                init_pos = nx.spectral_layout(G, weight=None)
-                raw_spring = nx.spring_layout(G, k=0.15, pos=init_pos, iterations=25, seed=SEED_FIXED)
-            except:
-                raw_spring = nx.spring_layout(G, k=0.15, iterations=20, seed=SEED_FIXED)
+                raw = nx.spring_layout(G, k=0.15, pos=init_pos, iterations=iters, seed=SEED_FIXED)
+                s = stabilize_dict(raw, anchor_id)
+                return np.array([s.get(n, (0,0)) for n in nodes_ordered])
+            except: return np.zeros((N, 2))
 
-        pos_spring = stabilize_dict(raw_spring, anchor_id)
-        spring_arr = np.array([pos_spring.get(int(n), (0.0, 0.0)) for n in nodes_ordered], dtype=float)
+        spring_rand = get_spring(None)
+        spring_main = get_spring(init_main)
+        spring_classic = get_spring(init_alt)
 
-        # --- Spectral ---
-        try:
-            G_spec = G.copy()
-            ignition_threshold = 1.5
-            if mean_deg < ignition_threshold:
-                ghost_edges = [(anchor_id, int(n), 1e-5) for n in nodes_ordered if int(n) != anchor_id]
-                G_spec.add_weighted_edges_from(ghost_edges)
+        # C. MDS & UMAP
+        adj_mat = nx.to_scipy_sparse_array(G, nodelist=nodes_ordered, format='csr')
 
-            raw_spec_dict = nx.spectral_layout(G_spec, weight='weight')
-            spec_arr = np.array([raw_spec_dict.get(int(n), (0.0, 0.0)) for n in nodes_ordered], dtype=float)
+        # UMAP
+        if mean_deg < 0.01:
+            umap_pos = np.zeros((N, 2))
+            n_neighbors = 0
+        else:
+            umap_pos = run_umap_layout_original(adj_mat, mean_deg, seed=(SEED_FIXED))
+            umap_pos = stabilize_array(umap_pos, 0)
+            n_neighbors = int(max(2, round(mean_deg)))
 
-            if mean_deg < ignition_threshold:
-                target_idx = anchor_idx
+        # MDS 2D
+        mds2, mds2_meta = FastMDS(2).fit_transform(adj_mat, N)
+        mds2 = stabilize_array(mds2, 0)
+        evals_all = mds2_meta.get("eigvals_all", [])
+        valid_evals = evals_all[evals_all > 1e-9]
+        total_variance = np.sum(valid_evals) if len(valid_evals) > 0 else 1.0
+        ev2_sum = np.sum(evals_all[:2]) if len(evals_all) >= 2 else np.sum(evals_all)
+        ev2_pct = (ev2_sum / total_variance) * 100
+        title_2d = f"4. MDS 2D (EV={ev2_pct:.1f}%)"
+
+        # MDS 3D
+        mds3, mds3_meta = FastMDS(3).fit_transform(adj_mat, N)
+        mds3 = stabilize_array(mds3, 0)
+        evals_3d = mds3_meta.get("eigvals_all", [])
+        ev3_sum = np.sum(evals_3d[:3]) if len(evals_3d) >= 3 else np.sum(evals_3d)
+        ev3_pct = (ev3_sum / (np.sum(evals_3d[evals_3d > 1e-9]) or 1.0)) * 100
+        title_3d = f"6. MDS 3D (EV={ev3_pct:.1f}%)"
+
+        # --- COLOR FIELDS (Integrated from v0.py) ---
+        mode = getattr(args, "color_mode", "auto")
+        local_cmap = GLOBAL_CMAP
+
+        if mode == "phase_integration":
+            cvals = compute_integrated_phase(G, nodes_ordered)
+            ctitle = "Projected Phase (∫θ)"; local_cmap = "twilight"
+        elif mode == "frustration":
+            cvals = compute_node_frustration(G, nodes_ordered)
+            ctitle = "Geom. Frustration"; local_cmap = "inferno"
+        elif mode == "spectral_angle":
+            if spec_A is not None:
+                # Use v1 and v2
+                cvals = np.arctan2(spec_raw_array[:, 1], spec_raw_array[:, 0])
+                ctitle = "Spectral Angle (ψ)"; local_cmap = "hsv"
+                cmin_override, cmax_override = -math.pi, math.pi
             else:
-                max_deg_node = max(dict(G.degree()).items(), key=lambda x: x[1])[0]
-                target_idx = int(np.where(nodes_ordered == max_deg_node)[0][0])
+                cvals = degrees; ctitle = "Deg (No Spectral)"
+        elif mode == "degree":
+            cvals = degrees; ctitle = "Degree"
+        elif mode == "rho":
+            cvals = rhos; ctitle = "ρ (Amp)"
+        else:
+             # Auto-fallback logic
+             def _span(x): return float(np.nanmax(x) - np.nanmin(x)) if x.size > 0 else 0.0
+             if _span(rhos) > 1e-12:
+                 cvals = rhos; ctitle = "ρ (Amp)"
+             else:
+                 cvals = degrees; ctitle = "Degree"
 
-            spec_arr = stabilize_array(spec_arr, target_idx)
-        except:
-            spec_arr = np.zeros((N, 2), dtype=float)
+        cmin = float(np.nanmin(cvals)) if cvals.size else 0.0
+        cmax = float(np.nanmax(cvals)) if cvals.size else 1.0
+        if abs(cmax - cmin) < 1e-12: cmin, cmax = cmin - 1.0, cmin + 1.0
+        cmap_args = dict(c=cvals, cmap=local_cmap, vmin=cmin, vmax=cmax, s=20, alpha=0.9)
 
-        # --- LMDS ---
-        adj_mat = nx.to_scipy_sparse_array(G, nodelist=[int(n) for n in nodes_ordered], format='csr')
-        k_landmarks = min(N, 200)
 
-        fmds_2d = FastMDS(n_components=2, n_landmarks=k_landmarks, seed=SEED_FIXED)
-        raw_mds_2d, mds2_meta = fmds_2d.fit_transform(adj_mat, N)
-        mds2 = stabilize_array(raw_mds_2d, anchor_idx)
-        ev2 = explained_var(mds2_meta["eigvals_all"], 2)
+        # 3. Render
+        fig = plt.figure(figsize=(24, 24))
 
-        fmds_3d = FastMDS(n_components=3, n_landmarks=k_landmarks, seed=SEED_FIXED)
-        raw_mds_3d, mds3_meta = fmds_3d.fit_transform(adj_mat, N)
-        mds3 = stabilize_array(raw_mds_3d, anchor_idx)
-        ev3 = explained_var(mds3_meta["eigvals_all"], 3)
+        # --- BACKGROUND TEXTURE ---
+        ax_bg = fig.add_axes([0, 0, 1, 1], zorder=-10)
+        ax_bg.axis('off')
+        ax_bg.spy(adj_mat, markersize=0.5, color='#444444', alpha=0.15)
 
-        # --- Align to previous (aligned lane only) ---
-        R2_used = None
-        R3_used = None
-        Rspec_used = None
-        Rspring_used = None
+        plt.subplots_adjust(left=0.05, right=0.95, top=0.92, bottom=0.05, hspace=0.25, wspace=0.25)
 
-        if aligned_mode:
-            prev = load_prev_alignment(cache_dir, args.step - 1)
-            if prev is not None:
-                prev_nodes = prev["nodes"]
-
-                # Spring
-                T = compute_procrustes_transform(spring_arr, nodes_ordered, prev["spring"], prev_nodes)
-                if T is not None:
-                    R_new, t_prev, mean_cur_all = T
-                    if ENABLE_CAMERA_INERTIA and prev.get("Rspring") is not None:
-                        R_new = blend_rotations(R_new, prev["Rspring"], INERTIA_ALPHA)
-                    spring_arr = apply_transform(spring_arr, R_new, t_prev, mean_cur_all)
-                    Rspring_used = R_new
-
-                # Spectral
-                T = compute_procrustes_transform(spec_arr, nodes_ordered, prev["spec"], prev_nodes)
-                if T is not None:
-                    R_new, t_prev, mean_cur_all = T
-                    if ENABLE_CAMERA_INERTIA and prev.get("Rspec") is not None:
-                        R_new = blend_rotations(R_new, prev["Rspec"], INERTIA_ALPHA)
-                    spec_arr = apply_transform(spec_arr, R_new, t_prev, mean_cur_all)
-                    Rspec_used = R_new
-
-                # LMDS 2D
-                T = compute_procrustes_transform(mds2, nodes_ordered, prev["mds2"], prev_nodes)
-                if T is not None:
-                    R_new, t_prev, mean_cur_all = T
-                    if ENABLE_CAMERA_INERTIA and prev.get("R2") is not None:
-                        R_new = blend_rotations(R_new, prev["R2"], INERTIA_ALPHA)
-                    mds2 = apply_transform(mds2, R_new, t_prev, mean_cur_all)
-                    R2_used = R_new
-
-                # LMDS 3D
-                T = compute_procrustes_transform(mds3, nodes_ordered, prev["mds3"], prev_nodes)
-                if T is not None:
-                    R_new, t_prev, mean_cur_all = T
-                    if ENABLE_CAMERA_INERTIA and prev.get("R3") is not None:
-                        R_new = blend_rotations(R_new, prev["R3"], INERTIA_ALPHA)
-                    mds3 = apply_transform(mds3, R_new, t_prev, mean_cur_all)
-                    R3_used = R_new
-
-            # Save cache
-            save_alignment(cache_dir, args.step, nodes_ordered, spring_arr, spec_arr, mds2, mds3,
-                           R2=R2_used, R3=R3_used, Rspec=Rspec_used, Rspring=Rspring_used)
-
-        if png_exists and aligned_mode and args.skip_png_if_exists:
-            return
-
-        # --- RENDER PNG ---
-        v_min = float(np.min(rhos)) if rhos.size else 0.0
-        v_max = float(np.max(rhos)) if rhos.size else 1.0
-        if v_max <= v_min:
-            v_max = v_min + 1e-12
-
-        fig = plt.figure(figsize=(20, 17))
-        # UPDATED: Pushed top down from 0.72 to 0.70 to give header more room
-        plt.subplots_adjust(top=0.70, hspace=0.2, wspace=0.15)
-
-        scatter_args = dict(c=rhos, cmap=GLOBAL_CMAP, vmin=v_min, vmax=v_max, s=20, alpha=0.9)
-
-        plots = [
-            (spring_arr, "1. Physical Topology (Spring) [Stabilized+Aligned]" if aligned_mode else
-                        "1. Physical Topology (Spring) [Stabilized]", None),
-            (spec_arr, "2. Quantum Resonance (Spectral) [Stabilized+Aligned]" if aligned_mode else
-                      "2. Quantum Resonance (Spectral) [Stabilized]", None),
-            (mds2, f"3. Emergent Manifold (Fast MDS 2D) [{'Aligned' if aligned_mode else 'Preview'}] | EV2={ev2:.1%}", None),
-            (mds3, f"4. The Hologram (Fast MDS 3D) [{'Aligned' if aligned_mode else 'Preview'}] | EV3={ev3:.1%}", "3d"),
+        grid = [
+            (degrees, "1. Degree Distribution", 'hist'),
+            (spring_rand, "2. Spring (Random Init)", 'scatter'),
+            (mds3_meta, "3. LMDS Spectrum", 'spectrum'),
+            (mds2, title_2d, 'scatter'),
+            (umap_pos, f"5. UMAP (neighbors={n_neighbors})", 'scatter'),
+            (mds3, title_3d, '3d'),
+            (spring_main, "7. Spring (Spectral v1-v2)", 'scatter'),
+            (spec_raw_array, "8. Spectral (Raw)", 'scatter'),
+            (spring_classic, "9. Spring (Spectral v1-v3)", 'scatter')
         ]
 
-        sc_map = None
+        for i, (data, title, type_) in enumerate(grid):
+            ax = fig.add_subplot(3, 3, i+1, projection='3d' if type_=='3d' else None)
+            ax.set_facecolor((0, 0, 0, 0))
+            ax.set_title(title, fontsize=12)
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
 
-        for i, (arr, title, proj) in enumerate(plots):
-            ax = fig.add_subplot(2, 2, i + 1, projection=proj)
+            if type_ == 'scatter':
+                pos = {n: data[k] for k, n in enumerate(nodes_ordered)}
+                nx.draw_networkx_edges(G, pos, ax=ax, alpha=0.03, edge_color="gray")
+                ax.scatter(data[:,0], data[:,1], **cmap_args)
+                ax.axis('off')
 
-            if proj == "3d":
-                arr3 = np.array(arr, dtype=float)
-                if arr3.shape[1] < 3:
-                    pad = np.zeros((arr3.shape[0], 3), dtype=float)
-                    pad[:, :arr3.shape[1]] = arr3
-                    arr3 = pad
+            elif type_ == '3d':
+                d3 = np.hstack([data, np.zeros((data.shape[0], 1))]) if data.shape[1] < 3 else data
+                ax.scatter(d3[:,0], d3[:,1], d3[:,2], **cmap_args)
+                ax.set_box_aspect([1,1,1])
+                ax.axis('off')
+                ax.xaxis.set_pane_color((1.0, 1.0, 1.0, 0.0))
+                ax.yaxis.set_pane_color((1.0, 1.0, 1.0, 0.0))
+                ax.zaxis.set_pane_color((1.0, 1.0, 1.0, 0.0))
+                ax.set_facecolor((0, 0, 0, 0))
 
-                ax.scatter(arr3[:, 0], arr3[:, 1], arr3[:, 2], **scatter_args)
-                ax.set_box_aspect([1, 1, 1])
+            elif type_ == 'hist':
+                if data.size > 0:
+                    bins = np.arange(data.min(), data.max() + 2) - 0.5
+                    counts, edges = np.histogram(data, bins=bins)
+                    bin_centers = edges[:-1] + 0.5
+                    cmap = plt.get_cmap(local_cmap) # Use local_cmap here
+                    norm = plt.Normalize(vmin=cmin, vmax=cmax)
 
-                max_range = (np.max(arr3, axis=0) - np.min(arr3, axis=0)).max() / 2.0
-                mid = (np.max(arr3, axis=0) + np.min(arr3, axis=0)) * 0.5
-                ax.set_xlim(mid[0] - max_range, mid[0] + max_range)
-                ax.set_ylim(mid[1] - max_range, mid[1] + max_range)
-                ax.set_zlim(mid[2] - max_range, mid[2] + max_range)
-                ax.set_title(title, fontsize=14)
-                ax.axis("off")
+                    if mode == "degree":
+                         bar_colors = [cmap(norm(k)) for k in bin_centers]
+                    else:
+                         bar_colors = 'white'
 
-            elif i == 0:
-                edge_alpha = 0.05 if N < 5000 else 0.01
-                pos_dict_for_edges = {int(n): arr[idx] for idx, n in enumerate(nodes_ordered)}
-                if N < 15000:
-                    nx.draw_networkx_edges(G, pos_dict_for_edges, ax=ax, alpha=edge_alpha, edge_color="gray")
+                    ax.bar(edges[:-1], counts, width=0.8, color=bar_colors, edgecolor='black', linewidth=0.5, align='edge')
+                    if len(counts) > 0: ax.set_ylim(top=max(counts) * 1.15)
 
-                sc_map = ax.scatter(arr[:, 0], arr[:, 1], **scatter_args)
-                ax.set_title(title, fontsize=14)
-                ax.axis("off")
-            else:
-                ax.scatter(arr[:, 0], arr[:, 1], **scatter_args)
-                ax.set_title(title, fontsize=14)
-                ax.axis("off")
 
-        fig.suptitle("Relational Reality", fontsize=22, y=0.98, fontweight="bold")
-        step_fmt = f"{args.step:,}".replace(",", "_")
-        sub_title = f"E{args.version} | N={args.N} | S{args.seed} | Step {step_fmt} | Avg <k>={mean_deg:.2f}"
-        fig.text(0.5, 0.95, sub_title, ha="center", fontsize=15)
+                    for x_pos, y_pos, k_val in zip(edges[:-1], counts, bin_centers):
+                        if y_pos > 0:
+                            ax.text(x_pos + 0.4, y_pos, str(int(y_pos)), ha='center', va='bottom', fontsize=10, color='black')
 
-        # --- UPDATED: Degree Histogram Layout ---
-        # Moved to the LEFT side: [left, bottom, width, height]
-        ax_hist = fig.add_axes([0.08, 0.76, 0.40, 0.08])
-        if degrees.size:
-            deg_min, deg_max = degrees.min(), degrees.max()
-            bins = np.arange(deg_min, deg_max + 2) - 0.5
-            counts, edges = np.histogram(degrees, bins=bins)
-            centers = (edges[:-1] + edges[1:]) / 2
-            width = 0.8 * (edges[1] - edges[0])
+                    ax.axvline(mean_deg, color='red', linestyle='--', linewidth=2, alpha=0.7)
+                    ax.set_xlim(left=-0.9)
+                    if args.global_max_k > 0: ax.set_xlim(right=args.global_max_k + 0.5)
+                    ax.xaxis.set_major_locator(MaxNLocator(integer=True))
 
-            # Re-map colors for the histogram bars
-            norm = plt.Normalize(vmin=v_min, vmax=v_max)
-            cmap = plt.get_cmap(GLOBAL_CMAP)
-            bin_colors = []
-            for b_center in centers:
-                # Average rho of nodes with this degree approx
-                relevant = rhos[np.abs(degrees - b_center) < 0.5]
-                if relevant.size > 0:
-                    val = np.mean(relevant)
+            elif type_ == 'spectrum':
+                ev = np.array([]) if args.step == 0 else np.array(data.get("eigvals_all", []))
+                ax.spines['top'].set_visible(False)
+                ax.spines['right'].set_visible(False)
+                if len(ev) >= 2:
+                    mask = (ev > -np.inf); mask[:3] = True
+                    ev = ev[mask][:30]
+                    ev = np.maximum(ev, 1e-6)
                 else:
-                    val = v_min
-                bin_colors.append(cmap(norm(val)))
+                    ev = ev[ev > 0][:30]
 
-            bars = ax_hist.bar(centers, counts, width=width, color=bin_colors)
+                if ev.size > 0:
+                    xs = np.arange(1, len(ev) + 1)
+                    ax.plot(xs, ev, 'o-', color='#444', markersize=4, linewidth=1)
+                    ax.set_yscale("log")
+                    from matplotlib.ticker import ScalarFormatter
+                    ymin, ymax = np.min(ev), np.max(ev)
+                    if ymax - ymin < 1.0:
+                        mid = (ymax + ymin) / 2.0
+                        ax.set_ylim(max(0, mid - 0.6), mid + 0.6)
+                    formatter = ScalarFormatter()
+                    formatter.set_scientific(False)
+                    ax.yaxis.set_major_formatter(formatter)
+                    if (ymax < 100 and ymin > 0.1) or ((ymax / max(ymin, 0) < 10) and ymax > 0.01):
+                        ax.yaxis.set_minor_formatter(formatter)
+                    else:
+                        ax.yaxis.set_minor_formatter(plt.NullFormatter())
 
-            # Adjust Y-limit so text labels don't hit the top
-            if len(counts) > 0:
-                ax_hist.set_ylim(0, max(counts) * 1.15)
+                    rounded_eigs = np.round(ev, 2)
+                    unique_vals, counts_ = np.unique(rounded_eigs, return_counts=True)
+                    sorted_indices = np.argsort(unique_vals)[::-1]
+                    unique_vals = unique_vals[sorted_indices]
+                    counts_ = counts_[sorted_indices]
+                    summary_text = "modes:\n"
+                    for val, count in zip(unique_vals[:30], counts_[:30]):
+                        if count > 1: summary_text += f"(x{count}) {val:.2f}\n"
+                        else: summary_text += f"{val:.2f}\n"
+                    props = dict(boxstyle='round', facecolor='white', alpha=0.9, edgecolor='gray')
+                    ax.text(0.95, 0.95, summary_text, transform=ax.transAxes, fontsize=11, va='top', ha='right', bbox=props)
 
-            for rect in bars:
-                height = rect.get_height()
-                if height > 0:
-                    ax_hist.text(rect.get_x() + rect.get_width() / 2., height,
-                                f"{int(height)}", ha="center", va="bottom", fontsize=7, color="black")
+        stats = f"iter: {args.step_str} | k: {mean_deg:.4f} | color: {ctitle}"
+        fig.suptitle(f"Relational Reality | N{N} | {args.version_tag} | S{args.seed}\n{stats}",
+                     fontsize=18, y=0.98, fontweight="bold")
 
-            ax_hist.axvline(mean_deg, color="red", linestyle="--", alpha=0.8)
-            ax_hist.set_title(f"Degree Distribution (Avg <k>={mean_deg:.2f})", fontsize=10, pad=3)
-            ax_hist.tick_params(labelsize=8)
-            ax_hist.spines['top'].set_visible(False)
-            ax_hist.spines['right'].set_visible(False)
+        pct = (args.frame_idx + 1) / max(1, args.total_frames)
+        total_slots = 60
+        filled = int(pct * total_slots)
+        bar = f"|{'█' * filled}{'·' * (total_slots - filled)}|"
+        fig.text(0.5, 0.95, bar, ha="center", fontsize=10, color='#555', family='monospace')
 
-        # --- UPDATED: Eigen Spectrum Layout ---
-        # Moved to the RIGHT side: [left, bottom, width, height]
-        try:
-            eigs = np.array(mds3_meta["eigvals_all"], dtype=float)
-            eigs = eigs[eigs > 1e-12][:30]
-            if eigs.size > 0:
-                ax_spec = fig.add_axes([0.56, 0.76, 0.35, 0.08])
-                xs = np.arange(1, len(eigs) + 1)
-
-                ax_spec.plot(xs, eigs, marker="o", linewidth=1, markersize=3, color='#444444')
-                ax_spec.set_yscale("log")
-
-                if len(eigs) >= 2: ax_spec.axvline(2, linestyle="--", color='gray', alpha=0.4)
-                if len(eigs) >= 3: ax_spec.axvline(3, linestyle="--", color='gray', alpha=0.4)
-
-                ax_spec.set_title("LMDS Eigen Spectrum", fontsize=10, pad=3)
-                ax_spec.tick_params(axis="both", labelsize=7)
-                ax_spec.spines['top'].set_visible(False)
-                ax_spec.spines['right'].set_visible(False)
-
-                # Info box
-                ax_spec.text(
-                    0.98, 0.90,
-                    f"EV2={ev2:.1%}\nEV3={ev3:.1%}",
-                    transform=ax_spec.transAxes,
-                    ha="right", va="top",
-                    fontsize=8,
-                    bbox=dict(facecolor='white', alpha=0.8, edgecolor='#cccccc', boxstyle='round,pad=0.2')
-                )
-        except:
-            pass
-
-        # Colorbar
-        if sc_map is None:
-            import matplotlib as mpl
-            sc_map = mpl.cm.ScalarMappable(cmap=GLOBAL_CMAP, norm=mpl.colors.Normalize(vmin=v_min, vmax=v_max))
-            sc_map.set_array([])
-
-        cbar_ax = fig.add_axes([0.2, 0.05, 0.6, 0.02])
-        cb = fig.colorbar(sc_map, cax=cbar_ax, orientation="horizontal")
-        cb.set_label(r"$\rho$ (Density)", fontsize=14)
-
-        plt.savefig(out_path, dpi=150)
+        plt.savefig(out_path, dpi=200)
         plt.close(fig)
 
     except Exception as e:
-        print(f"Error in Worker Frame {args.step}: {e}")
+        print(f"Frame {args.step} Error: {e}")
         import traceback
         traceback.print_exc()
 
 
-# --- MAIN ---
+# --- MAIN CONTROLLER ---
+def _launch_subprocess_star(args):
+    return launch_subprocess(*args)
+
+def launch_subprocess(task_args):
+    step_int, node_f, edge_f, step_str, out_dir, ver, N, s_id, gk, f_idx, tot, color_mode = task_args
+    print(f"[Start] Processing N{str(N)}_{ver}_S{str(s_id)} iteration {step_str} (Frame {f_idx+1}/{tot})...", flush=True)
+    start_time = time.time()
+
+    cmd = [sys.executable, __file__, "--worker",
+           "--version_tag", ver, "--N", str(N), "--seed", str(s_id),
+           "--step", str(step_int), "--step_str", step_str,
+           "--node_file", node_f, "--edge_file", edge_f, "--out_dir", out_dir,
+           "--global_max_k", str(gk), "--frame_idx", str(f_idx), "--total_frames", str(tot),
+           "--color_mode", str(color_mode)]
+
+    subprocess.run(cmd)
+
+    duration = time.time() - start_time
+    print(f"[Done]  Finished Step {step_str} in {duration:.2f}s", flush=True)
+
+    try:
+        log_path = os.path.join(out_dir, "render.log")
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        log_entry = f"[{timestamp}] Frame: {f_idx+1:04d}/{tot} | Iter: {step_str} | Duration: {duration:.2f}s\n"
+        with open(log_path, "a") as f:
+            f.write(log_entry)
+    except Exception as e:
+        print(f"Warning: Could not write to log: {e}")
+
+    return step_int
+
+def get_binary_spread_order(steps):
+    if not steps: return []
+    tasks = list(steps)
+    N = len(tasks)
+    if N == 0: return []
+    indices = []
+    seen = set()
+
+    if 0 not in seen: indices.append(0); seen.add(0)
+    if (N - 1) not in seen and (N - 1) >= 0: indices.append(N - 1); seen.add(N - 1)
+
+    queue = deque([(0, N - 1)])
+    while queue:
+        low, high = queue.popleft()
+        if low + 1 >= high: continue
+        mid = (low + high) // 2
+        if mid not in seen: indices.append(mid); seen.add(mid)
+        queue.append((low, mid)); queue.append((mid, high))
+    return [tasks[i] for i in indices]
 
 def main():
-    args = parse_arguments()
-    warnings.filterwarnings("ignore")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--worker", action="store_true")
+    parser.add_argument("--version_tag", type=str); parser.add_argument("--N", type=int); parser.add_argument("--seed", type=str)
+    parser.add_argument("--step", type=int); parser.add_argument("--step_str", type=str)
+    parser.add_argument("--node_file", type=str); parser.add_argument("--edge_file", type=str); parser.add_argument("--out_dir", type=str)
+    parser.add_argument("--global_max_k", type=float, default=0); parser.add_argument("--frame_idx", type=int, default=0); parser.add_argument("--total_frames", type=int, default=1)
+    parser.add_argument("--zoom", type=float, default=None); parser.add_argument("--threads", type=int)
+    parser.add_argument("--color_mode", type=str, default="auto", choices=["auto","rho","degree","phase_integration","frustration","spectral_angle"])
+    args = parser.parse_args()
 
     if args.worker:
         worker_main(args)
         return
 
-    print("==================================================")
-    print("  RELATIONAL REALITY VISUALIZER V5.4 (SPREAD+STB) ")
-    print("==================================================")
+    print("=== RELATIONAL REALITY VISUALIZER (v2: Enhanced Modes) ===")
 
-    # 1. Version
-    if args.version:
-        ver_str = f"E{args.version}"
-        if not os.path.exists(os.path.join(RUNS_DIR, ver_str)):
-            return
-    else:
-        versions = get_subfolders(RUNS_DIR)
-        versions.sort()
-        ver_str = select_option(versions, "Select Engine Version")
-        if not ver_str:
-            return
+    def get_input(path, name):
+        if not os.path.exists(path): return None
+        opts = [d for d in os.listdir(path)
+                if os.path.isdir(os.path.join(path, d))
+                and not d.startswith("__") and not d.startswith(".")
+                and (re.match(r"^E\d+D\d+", d) if name == "Version" else True)]
+        def natural_keys(text): return [int(c) if c.isdigit() else c.lower() for c in re.split(r'(\d+)', text)]
+        opts = sorted(opts, key=natural_keys)
+        if not opts: return None
+        if len(opts) == 1: return opts[0]
+        print(f"\nSelect {name}:")
+        for i, o in enumerate(opts): print(f"[{i+1}] {o}")
+        return opts[int(input("Select: "))-1]
 
-    # 2. N
-    n_path = os.path.join(RUNS_DIR, ver_str)
-    if args.N:
-        n_str = f"N{args.N}"
-        if not os.path.exists(os.path.join(n_path, n_str)):
-            return
-    else:
-        n_counts = get_subfolders(n_path)
-        n_counts.sort(key=lambda x: int(x[1:]) if x[1:].isdigit() else 0)
-        n_str = select_option(n_counts, "Select System Size (N)")
-        if not n_str:
-            return
-    n_val = int(n_str[1:])
+    if not args.version_tag: args.version_tag = get_input(RUNS_DIR, "Version")
+    path_n = os.path.join(RUNS_DIR, args.version_tag)
+    if not args.N: args.N = int(get_input(path_n, "Size (N)").replace("N",""))
+    path_s = os.path.join(path_n, f"N{args.N}")
+    if not args.seed: args.seed = get_input(path_s, "Seed").replace("S","")
 
-    # 3. Seed
-    seed_path = os.path.join(n_path, n_str)
-    if args.seed:
-        seed_str = f"S{args.seed}"
-        if not os.path.exists(os.path.join(seed_path, seed_str)):
-            return
-    else:
-        seeds = get_subfolders(seed_path)
-        seeds.sort(key=lambda x: int(x[1:]) if x[1:].isdigit() else 0)
-        seed_str = select_option(seeds, "Select Simulation Seed")
-        if not seed_str:
-            return
+    # --- COLOR MODE MENU ---
+    if args.color_mode == "auto":
+        print("\nSelect Color Mode:")
+        print("[1] Degree (Connectivity) (Default)")
+        print("[2] Spectral Angle (Manifold Position)")
+        print("[3] Rho (Amplitude)")
+        print("[4] Frustration (Geometric Stress)")
+        print("[5] Phase Integration (Path Winding)")
+        choice = input("Select [1-5]: ").strip()
+        mode_map = {
+            "1": "degree",
+            "2": "spectral_angle",
+            "3": "rho",
+            "4": "frustration",
+            "5": "phase_integration",
+        }
+        args.color_mode = mode_map.get(choice, "auto")
+        print(f"Selected Mode: {args.color_mode}")
 
-    # 4. Threads (total budget)
-    max_cores = cpu_count()
-    if args.threads:
-        n_cores = args.threads
-    else:
-        print(f"\n--- Thread Configuration (Max: {max_cores}) ---")
-        n_cores = min(max_cores, 8)
+    base_path = os.path.join(path_s, f"S{args.seed}")
+    out_dir = os.path.join("renders", f"N{args.N}_{args.version_tag}_S{args.seed}_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+    os.makedirs(out_dir, exist_ok=True)
+    # ==========================================
+    #     TRACEABILITY COPIES
+    # ==========================================
+    # 1. Copy the visualization script itself
+    shutil.copy(__file__, os.path.join(out_dir, "visualize.py"))
+
+    # 2. Copy the engine and drive scripts
+    for script in ["engine.py", "drive.py"]:
+        src_path = os.path.join(path_n, script)
+        if os.path.exists(src_path):
+            shutil.copy(src_path, os.path.join(out_dir, script))
+
+    # 3. Copy the log file
+    log_file_path = os.path.join(path_s, f"S{args.seed}_log.csv")
+    if os.path.exists(log_file_path):
+        shutil.copy(log_file_path, os.path.join(out_dir, f"S{args.seed}_log.csv"))
+    # ==========================================
+
+    files = sorted(glob.glob(os.path.join(base_path, "*_nodes.csv")))
+    all_available_map = {}
+    for f in files:
+        m = re.search(r"iter_([\d_]+)_nodes", f)
+        if m:
+            s_str = m.group(1); s_int = int(s_str.replace('_', ''))
+            all_available_map[s_int] = (f, f.replace("nodes", "edges"), s_str)
+
+    zoom = args.zoom if args.zoom else DEFAULT_K_THRESHOLD
+    log_file_path = os.path.join(path_s, f"S{args.seed}_log.csv")
+    target_steps = set()
+    gk = 10
+
+    if os.path.exists(log_file_path) and zoom > 0:
         try:
-            inp = input(f"Enter threads (Default {n_cores}): ").strip()
-            if inp:
-                n_cores = int(inp)
-        except:
+            df = pd.read_csv(log_file_path, comment='#')
+            if 'k_avg' in df.columns:
+                df_clean = df.dropna(subset=['k_avg'])
+                if not df_clean.empty:
+                    k_vals = df_clean['k_avg'].values
+                    steps = df_clean['iter'].values
+                    min_k = np.nanmin(k_vals); max_k = np.nanmax(k_vals)
+                    if np.isfinite(min_k) and np.isfinite(max_k):
+                       # --- EARLY ZOOM LOGIC ---
+                        ZOOM_SLICES = 10
+                        ZOOM_WINDOW = 10  # Match this with drive.py
+
+                        fine_zoom = zoom / ZOOM_SLICES
+                        zoom_threshold = zoom * ZOOM_WINDOW
+
+                        # Fine targets from 0 up to the extended threshold
+                        fine_targets = np.arange(fine_zoom, zoom_threshold, fine_zoom)
+                        # Standard targets from the threshold up to the max
+                        standard_targets = np.arange(max(zoom_threshold, min_k), max_k + zoom, zoom)
+
+                        # Combine them (including min_k)
+                        targets = np.concatenate(([min_k], fine_targets, standard_targets))
+                        targets = np.unique(targets) # Strip duplicates
+
+                        # Find closest matches in the log
+                        target_idxs = [np.abs(k_vals - t).argmin() for t in targets]
+                        target_steps = set(steps[target_idxs])
+                        if 'k_max' in df.columns: gk = df['k_max'].max()
+        except: pass
+
+    if all_available_map:
+        target_steps.add(min(all_available_map.keys()))
+        target_steps.add(max(all_available_map.keys()))
+
+    tasks_map = {}
+    for s_int, (f, edge_f, s_str) in all_available_map.items():
+        if not target_steps or s_int in target_steps:
+             tasks_map[s_int] = (f, edge_f, s_str)
+
+
+    tasks_map = all_available_map  #comment out for special render all
+
+
+
+
+
+    sorted_steps = sorted(tasks_map.keys())
+    step_rank_map = {step: i for i, step in enumerate(sorted_steps)}
+    ordered_steps = get_binary_spread_order(sorted_steps)
+
+
+
+
+    final_tasks = []
+    total_count = len(ordered_steps)
+    for s_int in ordered_steps:
+        f, edge_f, s_str = tasks_map[s_int]
+        rank_idx = step_rank_map[s_int]
+        final_tasks.append((s_int, f, edge_f, s_str, out_dir, args.version_tag, args.N, args.seed, gk, rank_idx, total_count, args.color_mode))
+
+    print(f">> Rendering {len(final_tasks)} frames to {out_dir}...")
+
+    pool = Pool(args.threads or max(1, cpu_count()//4))
+    try:
+        iterator = pool.imap_unordered(_launch_subprocess_star, [[t] for t in final_tasks])
+        for _ in tqdm(iterator, total=len(final_tasks)):
             pass
-
-    full_seed_path = os.path.join(seed_path, seed_str)
-    data_dir = os.path.join(full_seed_path, "data")
-    output_dir = os.path.join(full_seed_path, "renders")
-    os.makedirs(output_dir, exist_ok=True)
-    os.makedirs(os.path.join(output_dir, PROCRUSTES_CACHE_DIRNAME), exist_ok=True)
-
-    v_id = int(ver_str[1:])
-    s_id = int(seed_str[1:])
-
-    steps_sorted, data_map = parse_steps(data_dir, v_id, n_val, s_id)
-    rendered_steps = get_rendered_steps(output_dir)
-    missing_steps = [s for s in steps_sorted if s not in rendered_steps]
-
-    if not missing_steps:
-        print("\n>> All frames rendered.")
-        return
-
-    open_file_explorer(output_dir)
-
-    # --- Build tasks ---
-    forward_steps = sorted(missing_steps)  # aligned lane wants chronological
-    spread_steps = smart_sample_sort(steps_sorted, rendered_steps)  # BSP order across timeline
-
-    if SPREAD_MAX_FRAMES is not None:
-        spread_steps = spread_steps[:SPREAD_MAX_FRAMES]
-
-    forward_tasks = [(s, data_map[s][0], data_map[s][1], data_map[s][2], output_dir, v_id, n_val, s_id) for s in forward_steps]
-    spread_tasks = [(s, data_map[s][0], data_map[s][1], data_map[s][2], output_dir, v_id, n_val, s_id) for s in spread_steps]
-
-    print(f"\n>> Missing frames total: {len(missing_steps)}")
-    print(f">> Forward aligned lane: {len(forward_tasks)} frames (chronological)")
-    print(f">> Spread preview lane:  {len(spread_tasks)} frames (BSP spread)")
-
-    if ENABLE_DUAL_LANE_RENDER and n_cores >= 2:
-        # Reserve 1 "lane" for forward; use remaining for spread parallelism.
-        spread_cores = max(1, n_cores - 1)
-
-        print(f">> Dual-lane enabled. Total cores={n_cores} -> spread pool cores={spread_cores}")
-
-        def forward_lane():
-            # Forward lane: aligned; also force cache chain even if PNG exists.
-            extra = ["--force_cache"]
-            if ALIGNED_FORWARD_SKIP_PNG_IF_EXISTS:
-                extra.append("--skip_png_if_exists")
-
-            for t in tqdm(forward_tasks, total=len(forward_tasks), desc="Forward(aligned)", position=0, leave=True):
-                launch_subprocess(t, extra_args=extra)
-
-        def spread_lane():
-            # Spread lane: no alignment, purely to get coverage ASAP.
-            extra = ["--no_align"]
-            if spread_cores <= 1:
-                for t in tqdm(spread_tasks, total=len(spread_tasks), desc="Spread(preview)", position=1, leave=True):
-                    launch_subprocess(t, extra_args=extra)
-            else:
-                with Pool(processes=spread_cores) as pool:
-                    iterable = [(task, extra) for task in spread_tasks]
-                    list(tqdm(
-                        pool.imap(_launch_subprocess_star, iterable),
-                        total=len(spread_tasks),
-                        desc="Spread(preview)",
-                        position=1,
-                        leave=True
-                    ))
-
-
-
-        th_fwd = threading.Thread(target=forward_lane, daemon=False)
-        th_spd = threading.Thread(target=spread_lane, daemon=False)
-
-        th_fwd.start()
-        th_spd.start()
-
-        th_fwd.join()
-        th_spd.join()
-
-    else:
-        # Fallback: if dual-lane is off or cores < 2
-        if ENABLE_PROCRUSTES_ALIGNMENT:
-            print("\n>> Dual-lane disabled or not enough cores; running aligned sequential.")
-            extra = ["--force_cache"]
-            if ALIGNED_FORWARD_SKIP_PNG_IF_EXISTS:
-                extra.append("--skip_png_if_exists")
-            for t in tqdm(forward_tasks, total=len(forward_tasks), desc="Aligned", leave=True):
-                launch_subprocess(t, extra_args=extra)
+        pool.close()
+        pool.join()
+    except KeyboardInterrupt:
+        print("\n\n[!] Ctrl+C Detected. Executing recursive kill...")
+        pool.terminate()
+        current_pid = os.getpid()
+        if platform.system() == 'Windows':
+            subprocess.run(f"taskkill /F /T /PID {current_pid}", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         else:
-            print("\n>> Alignment disabled; rendering spread order with pool.")
-            with Pool(processes=n_cores) as pool:
-                list(tqdm(pool.imap(launch_subprocess, spread_tasks), total=len(spread_tasks)))
-
-    print("\n[DONE] Visualization complete.")
-
+            import signal
+            try:
+                os.killpg(os.getpgid(current_pid), signal.SIGKILL)
+            except:
+                pass
+        sys.exit(1)
+    finally:
+        if 'pool' in locals() and not pool._state:
+            pool.join()
 
 if __name__ == "__main__":
     main()
