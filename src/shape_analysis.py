@@ -439,6 +439,9 @@ def plot_heatmap(records, out, restrict_N=None, metric="mean"):
         head = "Local spectral dimension d_s across (k, ℓ)"
         cellline = "cell = mean d_s over seeds present"
         extra = ""
+    import time as _t
+    _stamp = _t.strftime("%Y-%m-%d %H:%M:%S")
+    _nseeds = len(set(r["seed"] for r in records))
     fig.suptitle(
         f"{head}\n"
         f"rows = T (temperature)   columns = N   "
@@ -446,6 +449,12 @@ def plot_heatmap(records, out, restrict_N=None, metric="mean"):
         f"gaps:  ·  measured, <8 in-window points    "
         f"×  no data file (not yet run / failed){extra}",
         fontsize=10)
+    # Count/timestamp as a bottom caption (a 4th suptitle line collides with the
+    # top row's per-panel "N=" titles).
+    fig.text(0.5, 0.005,
+             f"{len(records)} cell-records · {_nseeds} seed(s) present "
+             f"· updated {_stamp}",
+             ha="center", va="bottom", fontsize=8, color="#666")
     fig.savefig(out, dpi=140, bbox_inches="tight")
     plt.close(fig)
     tail = f", {n_single} single-seed" if spread else ""

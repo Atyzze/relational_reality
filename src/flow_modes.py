@@ -552,6 +552,24 @@ def plots(cells, have_ref, args):
             x, y = xy(c)
             ax.annotate(f"k{c['k']} lb{c['lb']:g} T{c['T']:g}", (x, y),
                         fontsize=6, xytext=(3, -9), textcoords="offset points")
+    import time as _t
+    from matplotlib.lines import Line2D
+    ttl += (f"\n{len(cells)} cells · {len(live)} pass LCC≥{args.lcc_min:g}% "
+            f"· {len(gate)} excluded (gray ×) · updated {_t.strftime('%H:%M:%S')}")
+    handles = [
+        Line2D([0], [0], marker="o", linestyle="none", markerfacecolor="#7ec96e",
+               markeredgecolor="none", markersize=8,
+               label="flat-4D leaning (LCC ≥ gate)"),
+        Line2D([0], [0], marker="o", linestyle="none", markerfacecolor="#4ec9e0",
+               markeredgecolor="none", markersize=8,
+               label="flowing-4D leaning (LCC ≥ gate)"),
+        Line2D([0], [0], marker="x", linestyle="none", color="#bbb", markersize=7,
+               label=f"LCC < {args.lcc_min:g}% — excluded from call"),
+        Line2D([0], [0], marker="*", linestyle="none", markerfacecolor="#1a9c1a",
+               markeredgecolor="k", markersize=13,
+               label="ideal target (marker size ∝ score)"),
+    ]
+    ax.legend(handles=handles, loc="upper right", fontsize=7, framealpha=0.85)
     ax.set_title(ttl, fontsize=10)
     fig.tight_layout(); fig.savefig("flow_modes_plane.png", dpi=150); plt.close(fig)
     print("[plots] wrote flow_modes_plane.png")
@@ -594,8 +612,11 @@ def plots(cells, have_ref, args):
             if row == 1:
                 ax.set_xlabel("lb")
     fig.colorbar(im, ax=axes.ravel().tolist(), fraction=0.02, pad=0.02)
+    import time as _t
     fig.suptitle("Mode scores across (k, lb) per T  (top row flat-4D, "
-                 "bottom row flowing-4D)", fontsize=11)
+                 f"bottom row flowing-4D)\n{len(cells)} cells · "
+                 f"{len(live)} pass LCC≥{args.lcc_min:g}% · "
+                 f"updated {_t.strftime('%H:%M:%S')}", fontsize=11)
     fig.savefig("flow_modes_maps.png", dpi=150, bbox_inches="tight"); plt.close(fig)
     print("[plots] wrote flow_modes_maps.png")
 

@@ -125,3 +125,20 @@ arr)` throws on a 200k array; `arrMin` returns correctly.) The earlier
 re-entrancy guard, render-on-change, and per-panel `safe()` isolation remain as
 genuine robustness — and are why the error got *logged* instead of silently
 freezing the page — but the crash itself was the spread, now removed.
+
+## Figure annotations (counts + glyph legend)
+
+So every saved PNG is self-dating and the glyphs are explained:
+- **shape_heatmap.png** — bottom caption: `N cell-records · S seed(s) present ·
+  updated <timestamp>`. (Its `·` / `×` glyph meanings were already in the
+  subtitle.)
+- **flow_modes_plane.png** — title now carries `N cells · M pass LCC≥X% · K
+  excluded (gray ×) · updated <time>`, plus a real legend: green = flat-4D
+  leaning (LCC≥gate), cyan = flowing-4D leaning (LCC≥gate), gray × = LCC below
+  gate (excluded from the mode call), ★ = ideal target (marker size ∝ score).
+- **flow_modes_maps.png** — suptitle now carries the same cell/LCC counts +
+  timestamp.
+
+The gray × was never a bug — it means "LCC below the gate, so excluded from the
+4D call" (and in the heatmap, `×` separately means "no data file yet"). The
+counts give an at-a-glance check that a refresh actually happened.
