@@ -232,11 +232,32 @@ def calibrate_mu(k, T, lb, ec, verbose=True):
     lo, hi = MU_LO, MU_HI
     guess = max(lo, min(hi, _mu_guess(k, T, lb, ec)))
     best_mu, best_err, best_k_avg = guess, float("inf"), float("nan")
+    sat_floor = 0.0          # highest μ found to still saturate the cap
 
     for it in range(MU_MAX_ITER):
         mu = guess if it == 0 else (lo + hi) / 2.0
-        _, s, _, _ = build_graph(MU_N_CAL, k, T, lb, mu, ec,
-                                 seed=SEEDS[0], tmax_override=1500)
+        try:
+            _, s, _, _ = build_graph(MU_N_CAL, k, T, lb, mu, ec,
+                                     seed=SEEDS[0], tmax_override=1500)
+        except RuntimeError as e:
+            if "max_degree" not in str(e):
+                raise
+            # A cap hit means the graph wanted to grow past MAX_DEG at this μ,
+            # i.e. the degree penalty is too weak — μ is too LOW. So treat it
+            # exactly like "k_avg = +inf": raise the floor and keep searching
+            # UPWARD instead of letting the RuntimeError abort the whole cell.
+            #
+            # This is what was dropping the cold-T / low-ℓ corner. The cap was
+            # NOT hit at the μ those cells actually need (cold cells need a μ
+            # near the T=0 value, which is safe — that's why T=0 itself fills);
+            # it was only hit at a too-low *trial* μ the binary search probed
+            # on the way there (the it==0 down-bracket overshoots low for very
+            # small T, because the T>0 guess is T-independent). Recovering from
+            # it lets the search settle on the correct, safe μ and the cell
+            # fills, with no change to MAX_DEG.
+            sat_floor = max(sat_floor, mu)
+            lo, hi = (mu, mu * 4.0) if it == 0 else (mu, hi)
+            continue
         err = abs(s.k_avg - k)
         if err < best_err:
             best_err, best_mu, best_k_avg = err, mu, float(s.k_avg)
@@ -255,6 +276,11 @@ def calibrate_mu(k, T, lb, ec, verbose=True):
                 lo, hi = mu * 0.8, mu * 2.0
             else:
                 lo, hi = mu * 0.3, mu * 1.2
+        # Never let the bracket dip back into a μ range known to saturate the
+        # cap — that would just re-trigger the RuntimeError and waste an iter.
+        lo = max(lo, sat_floor)
+        if hi <= lo:
+            hi = lo * 1.5
 
     if verbose:
         log(f"    μ cal  k={k} T={T:.3f} lb={lb:.3f}: "
@@ -330,9 +356,12 @@ def calibrate_missing(targets, ec, workers=None, verbose=True):
         verbose: emit per-cell progress log lines
 
     Returns:
-        (table, n_done, n_failed) — the updated μ table and counts.
+        (table, n_done, n_failed, failures) — the updated μ table, counts,
+        and a {mu_key: error_message} dict for the cells whose calibration
+        raised (e.g. a max-degree cap hit during the calibration build).
         Failed cells are absent from the table; the caller can decide
-        whether to skip them or retry.
+        whether to skip them or retry, and can persist `failures` so the
+        dashboard can show *why* those cells produced no data.
 
     The μ table is persisted to disk after each successful calibration
     so a Ctrl-C in the middle still leaves a valid (partial) table.
@@ -344,7 +373,7 @@ def calibrate_missing(targets, ec, workers=None, verbose=True):
         if verbose:
             log(f"  μ calibration: all {len(list(targets))} targets "
                 f"already cached")
-        return table, 0, 0
+        return table, 0, 0, {}
 
     if verbose:
         log(f"  μ calibration: {len(needed)} target(s) missing → "
@@ -352,6 +381,7 @@ def calibrate_missing(targets, ec, workers=None, verbose=True):
     wk = min(workers or multiprocessing.cpu_count(), len(needed))
 
     n_done = n_failed = 0
+    failures = {}          # mu_key -> error message, for cells that raised
     t0 = time.time()
     with ProcessPoolExecutor(max_workers=wk) as ex:
         futs = {ex.submit(_calib_worker, a): a for a in needed}
@@ -359,6 +389,7 @@ def calibrate_missing(targets, ec, workers=None, verbose=True):
             k, T, lb, mu, err, k_avg, err_msg = f.result()
             if mu is None:
                 n_failed += 1
+                failures[mu_key(k, T, lb)] = err_msg or "calibration failed"
                 if verbose:
                     log(f"    ✗ μ cal failed k={k} T={T} lb={lb}: "
                         f"{err_msg}")
@@ -373,4 +404,4 @@ def calibrate_missing(targets, ec, workers=None, verbose=True):
     if verbose:
         log(f"  μ calibration done: {n_done} added, "
             f"{n_failed} failed, {len(table)} total entries")
-    return table, n_done, n_failed
+    return table, n_done, n_failed, failures

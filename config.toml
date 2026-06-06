@@ -11,6 +11,14 @@
 # Each combination of (k, T, lb, N) at the seed below is one "cell": one graph
 # grown from the Hamiltonian, on which the spectral dimension d_s(t) is
 # measured. The actual sweep is the full cross-product of these lists.
+#
+# This copy has: T set to the geometric grid you've been running
+# ([0, 0.001, 0.004, 0.016, 0.064]); N trimmed to a runnable ladder (the
+# shipped default's high end is infeasible — see the note by N); and a new
+# [dashboard] table at the BOTTOM with the plot-redraw setting. If you'd
+# rather not disturb your live grid, just copy that [dashboard] block into
+# your existing config.toml — the code defaults to a 10s redraw if it's
+# absent, so the block is optional.
 
 [grid]
 
@@ -32,7 +40,12 @@ lb = [0.90,0.95,0.99,0.995,0.999]
 # genuinely expensive (cost grows steeply with N), so a full sweep of the high
 # end takes a long time. The dashboard ETA accounts for this by extrapolating
 # the cost-vs-N trend.
-N = [1_000, 4_000, 16_000, 64_000, 256_000, 1_024_000, 4_096_000, 16_384_000, 65_536_000, 262_144_000, 1_048_576_000]
+N = [1_000, 4_000, 16_000, 64_000, 256_000, 1_024_000, 4_096_000]
+# NOTE: the largest N dominate runtime and memory (node_neighbors alone is
+# N · MAX_DEG · 4 bytes per worker — ~390 MB/worker at N=4_096_000, MAX_DEG=24).
+# The originally shipped ladder went to 1_048_576_000 (~100 GB/worker), which is
+# not runnable on a normal machine; extend the line above only as far as your
+# RAM and patience allow.
 
 # seed : base RNG seed for graph growth.
 # n_seeds : how many seeds to run per (k, T, ℓ, N) cell. The sweep runs
@@ -51,3 +64,16 @@ N = [1_000, 4_000, 16_000, 64_000, 256_000, 1_024_000, 4_096_000, 16_384_000, 65
 # Set n_seeds = 1 to recover the old single-seed behaviour.
 seed = 42
 n_seeds = 5
+
+
+# ── dashboard / plotting ────────────────────────────────────────────────
+# Runtime knobs for the live output. Not part of the sweep grid above.
+[dashboard]
+
+# redraw_interval_s : force the heatmaps and shape plots to redraw at least
+# this often (in seconds) while the sweep is running, EVEN IF no new cell has
+# finished. This is what makes config/marker changes and newly-flagged cells
+# show up promptly instead of waiting for the next (possibly very slow,
+# high-N) cell to land. Set to 0 to disable the periodic redraw — plots then
+# refresh only when a cell completes (the original behaviour).
+redraw_interval_s = 10

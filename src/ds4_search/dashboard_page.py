@@ -774,6 +774,7 @@ async function pollStatus() {
         <div><span class="k">progress:</span> ${s.n_done}/${s.n_total}
           (${pct}%)${s.n_failed ? ` <span style="color:#f48771">${s.n_failed} failed</span>` : ""}</div>
         <div><span class="k">elapsed:</span> ${fmtSec(s.elapsed_sec)}</div>
+        <div><span class="k">compute:</span> ${s.compute_spent_sec != null ? fmtSec(s.compute_spent_sec) : "—"}</div>
         <div><span class="k">eta:</span> ${fmtSec(s.eta_sec)}</div>
         <div><span class="k">rate:</span> ${s.rate_per_min ?? "—"} cells/min</div>
         <div><span class="k">rss:</span> ${s.rss_mb ?? "—"} MB

@@ -29,7 +29,12 @@ import tomllib as _tomllib
 _ROOT = _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
 _CONFIG_PATH = _os.path.join(_ROOT, "config.toml")
 with open(_CONFIG_PATH, "rb") as _f:
-    _grid = _tomllib.load(_f)["grid"]
+    _cfg = _tomllib.load(_f)
+_grid = _cfg["grid"]
+# Optional [dashboard] table: runtime/plotting knobs kept out of [grid] so the
+# grid stays purely about *what* is swept. Absent table → all defaults, so a
+# config that predates these keys still loads unchanged.
+_dash = _cfg.get("dashboard", {})
 
 K_ALL   = list(_grid["k"])
 T_ALL   = list(_grid["T"])
@@ -42,6 +47,14 @@ N_ALL   = list(_grid["N"])
 _SEED0   = int(_grid["seed"])
 _N_SEEDS = max(1, int(_grid.get("n_seeds", 1)))
 SEEDS    = [_SEED0 + _i for _i in range(_N_SEEDS)]
+
+# REDRAW_INTERVAL_S: force the heatmaps / shape plots to redraw at least this
+# often (in seconds) while the sweep is running, even when no new cell has
+# finished. This is what lets config/marker changes and newly-flagged cells
+# appear without waiting for the next (possibly very slow, high-N) cell to
+# land. 0 disables the periodic redraw — plots then refresh only when a cell
+# completes, as before. Set in config.toml under [dashboard].
+REDRAW_INTERVAL_S = max(0.0, float(_dash.get("redraw_interval_s", 10.0)))
 
 
 # ═══════════════════════════════════════════════════════════════════

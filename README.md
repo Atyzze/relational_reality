@@ -159,14 +159,12 @@ relational-reality/
 │   │   ├── cell_tests.py         build one cell (basin or torus reference) + tests
 │   │   └── flow_probe.py         the d_s(t) "flow" probe — the core measurement
 │   ├── metrics/            spectral-dimension library:
-│   │   ├── random_walk.py          random-walk return-probability d_s probe
-│   │   ├── stochastic_lanczos.py   SLQ (Lanczos) d_s probe
-│   │   ├── hausdorff_dimension.py  Hausdorff dimension probes
+│   │   ├── stochastic_lanczos.py   SLQ (Lanczos) heat-kernel d_s probe
+│   │   ├── numba_kernels.py        njit kernels (LCC extraction, CSR matvec, Laplacian build)
 │   │   ├── size_extrapolation.py   finite-size extrapolation to large N
 │   │   ├── reference_lattices.py   reference-lattice builders + registry
 │   │   ├── graph_topology.py       structural graph metrics
-│   │   ├── graph_container.py      Graph container + archive
-│   │   └── (random_walk_fits, bfs_kernels, numba_kernels — internal helpers)
+│   │   └── graph_container.py      Graph container
 │   ├── ds4_search/         the d_s→4 search
 │   │   ├── sweep_runner.py     headless grid worker: grows cells, classifies,
 │   │   │                       extrapolates the ETA, refreshes shape analysis
@@ -216,8 +214,11 @@ generated files stay out of `src/`.
   cost-vs-N trend and predicts each remaining cell from its own N.
 - **`d_s` everywhere means the spectral dimension** (the shape summary's
   `d_s_local` is the local spectral dimension read off at the curve's dip).
-  Hausdorff dimension, where computed, lives in `metrics/` and is named
-  separately.
+  This project is about the spectral dimension only. Other notions of
+  dimension (Hausdorff/box-counting, random-walk return probability) are not
+  measured here — for these graphs they aren't expected to stabilise, so they
+  are deliberately out of scope; anyone who wants one can add a probe that
+  reuses the existing BFS-distance helper in `core.cell_tests`.
 - **Reference lattices** are built by `core.cell_tests.build_torus_cell`;
   analytically-known reference builders live in `metrics/reference_lattices.py`.
 

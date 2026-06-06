@@ -37,6 +37,7 @@ average over t ∈ [3, 30] so every cell still gets a number.
 import argparse
 import csv
 import glob
+import json
 import os
 import re
 from collections import defaultdict
@@ -182,6 +183,59 @@ def scan(dir_):
         }
 
 
+# ─── failure records (why a cell has no flow CSV) ─────────────────────
+def load_failures(dir_):
+    """Collect *why* cells produced no flow_*.csv, so the heatmap can mark
+    them instead of showing an ambiguous gap (`×` currently means both
+    "not yet run" and "failed"). Two sources, both written by the sweep:
+
+      • fail_<tag>.json sidecars (in flow/ or the dir root) — a worker raised
+        while building/measuring a cell, keyed per (k, T, lb, N). reason is
+        'max_degree' when the graph's k_top hit the engine cap MAX_DEG (the
+        Markov chain stopped sampling H), else a generic error.
+      • mu_failures.json (dir root) — (k, T, lb) tuples whose μ-calibration
+        failed, so EVERY N for them was dropped before it could run.
+
+    Returns a dict of sets:
+        cap_cell / err_cell : {(k, T, lb, N)}  from the per-cell sidecars
+        cap_ktl / err_ktl   : {(k, T, lb)}     from the μ-calibration ledger
+    'cap' takes precedence over a generic error if a cell is flagged both.
+    """
+    cap_cell, err_cell, cap_ktl, err_ktl = set(), set(), set(), set()
+    for pat in (os.path.join(dir_, "flow", "fail_*.json"),
+                os.path.join(dir_, "fail_*.json")):
+        for p in glob.glob(pat):
+            try:
+                r = json.load(open(p))
+            except Exception:
+                continue
+            if r.get("kind") != "cell":
+                continue
+            try:
+                key = (int(r["k"]), float(r["T"]),
+                       float(r["lb"]), int(r["N"]))
+            except (KeyError, ValueError, TypeError):
+                continue
+            (cap_cell if r.get("reason") == "max_degree"
+             else err_cell).add(key)
+    mp = os.path.join(dir_, "mu_failures.json")
+    if os.path.exists(mp):
+        try:
+            for v in json.load(open(mp)).values():
+                try:
+                    ktl = (int(v["k"]), float(v["T"]), float(v["lb"]))
+                except (KeyError, ValueError, TypeError):
+                    continue
+                (cap_ktl if v.get("reason") == "max_degree"
+                 else err_ktl).add(ktl)
+        except Exception:
+            pass
+    err_cell -= cap_cell
+    err_ktl -= cap_ktl
+    return {"cap_cell": cap_cell, "err_cell": err_cell,
+            "cap_ktl": cap_ktl, "err_ktl": err_ktl}
+
+
 # ─── plots ────────────────────────────────────────────────────────────
 def plot_histogram(records, out, restrict_N=None):
     """Distribution of d_s_local. Quantized → multimodal at integers."""
@@ -262,7 +316,7 @@ def _cell_stat(finite_vals, metric):
     return (float(finite_vals[0]), "single_seed")
 
 
-def plot_heatmap(records, out, restrict_N=None, metric="mean"):
+def plot_heatmap(records, out, restrict_N=None, metric="mean", failures=None):
     """Heatmap over (k, ℓ) as a grid of panels: one ROW per temperature T
     and one COLUMN per N, so all four swept parameters appear in a single
     image. Within each panel the axes are k (vertical) × ℓ (horizontal);
@@ -282,13 +336,34 @@ def plot_heatmap(records, out, restrict_N=None, metric="mean"):
       ·  measured but the d_s(t) curve had <8 in-window points, so no
          value could be read (common at extreme ℓ and at k=2, a near-1D
          chain);
-      ×  no usable flow_*.csv exists at all — not yet run, or the worker
-         failed (a failed cell writes no CSV, so it looks not-yet-run).
+      ×  no data file AND no recorded failure — i.e. genuinely not yet run.
+      K  (red) the cell FAILED because its k_top hit the engine cap MAX_DEG
+         — the Markov chain stopped sampling the Hamiltonian, so no data.
+         Read from the sweep's fail_*.json / mu_failures.json (pass
+         `failures` from load_failures()).
+      !  (orange) the cell failed for some other reason (see the sweep log).
     In the spread map only, a third mark appears:
       n1 a single faint value — only one seed was readable, so no spread
          can be estimated for that cell.
+
+    NOTE: a `K`/`!` only appears where that (T, k, ℓ) slot exists on the
+    shared axes — i.e. at least one *other* cell at that T/k/ℓ produced data.
+    A temperature row in which every cell failed has no axis row to mark; the
+    sweep log still lists it.
     """
     spread = (metric == "seed_std")
+    failures = failures or {}
+
+    def fail_kind(k, T, lb, N):
+        """cap / fail / None for a cell that has no data file."""
+        if ((k, T, lb, N) in failures.get("cap_cell", ())
+                or (k, T, lb) in failures.get("cap_ktl", ())):
+            return "cap"
+        if ((k, T, lb, N) in failures.get("err_cell", ())
+                or (k, T, lb) in failures.get("err_ktl", ())):
+            return "fail"
+        return None
+
     # NB: keep non-finite records — needed to tell "measured but
     # unreadable" (·) apart from "never measured" (×).
     if restrict_N:
@@ -324,7 +399,8 @@ def plot_heatmap(records, out, restrict_N=None, metric="mean"):
                         val, kind = _cell_stat(finite_vals.get((k, lb), []),
                                                metric)
                     else:
-                        val, kind = float("nan"), "no_file"
+                        fk = fail_kind(k, T, lb, N)
+                        val, kind = float("nan"), (fk if fk else "no_file")
                     Z[i, j] = val
                     kinds[i, j] = kind
                     if spread and kind == "value":
@@ -350,6 +426,7 @@ def plot_heatmap(records, out, restrict_N=None, metric="mean"):
         squeeze=False)
 
     n_no_value = n_no_file = n_single = 0
+    n_cap = n_err = 0
     im = None
     for ri, T in enumerate(Ts):
         for ci, N in enumerate(Ns):
@@ -410,6 +487,28 @@ def plot_heatmap(records, out, restrict_N=None, metric="mean"):
                             linewidth=0.0, zorder=1.5))
                         ax.text(j, i, "n1", ha="center", va="center",
                                 fontsize=6, color="#9a9a9a", zorder=2)
+                    elif kind == "cap":
+                        # k_top hit the engine cap -> the cell failed. Solid
+                        # red fill + bold "K" so it can't be mistaken for a
+                        # not-yet-run gap.
+                        n_cap += 1
+                        ax.add_patch(mpatches.Rectangle(
+                            (j - 0.5, i - 0.5), 1.0, 1.0,
+                            facecolor="#f7d4d4", edgecolor="#d23b3b",
+                            linewidth=0.8, zorder=1.5))
+                        ax.text(j, i, "K", ha="center", va="center",
+                                fontsize=7, fontweight="bold",
+                                color="#b11d1d", zorder=2)
+                    elif kind == "fail":
+                        # failed for some other reason (see sweep log).
+                        n_err += 1
+                        ax.add_patch(mpatches.Rectangle(
+                            (j - 0.5, i - 0.5), 1.0, 1.0,
+                            facecolor="#fde6cc", edgecolor="#e08a1e",
+                            linewidth=0.8, zorder=1.5))
+                        ax.text(j, i, "!", ha="center", va="center",
+                                fontsize=7, fontweight="bold",
+                                color="#b5650f", zorder=2)
                     else:
                         if kind == "no_value":
                             n_no_value += 1
@@ -446,8 +545,8 @@ def plot_heatmap(records, out, restrict_N=None, metric="mean"):
         f"{head}\n"
         f"rows = T (temperature)   columns = N   "
         f"panel axes: k (vertical) × ℓ (horizontal)   {cellline}\n"
-        f"gaps:  ·  measured, <8 in-window points    "
-        f"×  no data file (not yet run / failed){extra}",
+        f"gaps:  ·  <8 in-window points    ×  not yet run    "
+        f"K  failed: k_top hit engine cap    !  failed: other{extra}",
         fontsize=10)
     # Count/timestamp as a bottom caption (a 4th suptitle line collides with the
     # top row's per-panel "N=" titles).
@@ -458,9 +557,10 @@ def plot_heatmap(records, out, restrict_N=None, metric="mean"):
     fig.savefig(out, dpi=140, bbox_inches="tight")
     plt.close(fig)
     tail = f", {n_single} single-seed" if spread else ""
+    cf = f", {n_cap} k-cap fail, {n_err} other fail" if (n_cap or n_err) else ""
     print(f"[map] saved → {out}  "
           f"(gaps: {n_no_value} with no readable value, "
-          f"{n_no_file} with no data file{tail})")
+          f"{n_no_file} not yet run{cf}{tail})")
 
 
 # ─── main ─────────────────────────────────────────────────────────────
@@ -516,11 +616,15 @@ def main(argv=None):
         plot_histogram(records, args.hist_out)
 
     restrict = set(args.N) if args.N else None
-    plot_heatmap(records, args.map_out, restrict_N=restrict, metric="mean")
+    # Why-it's-blank records, so the heatmap can mark failed cells (k-cap vs
+    # other) distinctly from not-yet-run ones.
+    failures = load_failures(args.dir)
+    plot_heatmap(records, args.map_out, restrict_N=restrict, metric="mean",
+                 failures=failures)
     # The spread map self-skips (with a note) when there is only one seed,
     # so this is safe to always call.
     plot_heatmap(records, args.seed_std_out, restrict_N=restrict,
-                 metric="seed_std")
+                 metric="seed_std", failures=failures)
 
 
 if __name__ == "__main__":

@@ -89,7 +89,8 @@ import numpy as np
 from core.cell_tests import build_cell, build_torus_cell, run_flow_test
 from core.flow_probe import write_csv as write_flow_csv, write_quad_npz
 from core.disk_io import load_mu_table, mu_key
-from core.project_constants import MU_JSON, EC, MAX_DEG, PROD_SWEEPS
+from core.project_constants import MU_JSON, EC, MAX_DEG, PROD_SWEEPS, \
+    REDRAW_INTERVAL_S
 from core.graph_builder import calibrate_missing
 
 
@@ -101,6 +102,58 @@ from core.graph_builder import calibrate_missing
 # are still readable by the dashboard (it globs both locations); use
 # main.py slot 5 (migrate-csvs) to move legacy files into here.
 FLOW_DIR = "flow"
+
+# Failure visibility. Cells that never produce a flow_*.csv (a worker raised,
+# or μ-calibration was dropped) are otherwise indistinguishable from
+# not-yet-run cells in the heatmap. We persist *why* so shape_analysis can
+# mark them: a per-cell sidecar for in-worker failures, and one ledger for
+# calibration drops. `MU_FAILURES_JSON` lives in the output root (next to
+# mu_table.json); fail sidecars live in FLOW_DIR next to the (absent) CSV.
+MU_FAILURES_JSON = "mu_failures.json"
+
+
+def _classify_fail_reason(msg):
+    """Bucket a failure message into a glyph category. 'max_degree' is the
+    one the heatmap calls out specially (the graph's k_top hit the engine
+    cap MAX_DEG, so the chain stopped sampling H); everything else is a
+    generic 'error'."""
+    m = (msg or "").lower()
+    return "max_degree" if "max_degree" in m else "error"
+
+
+def _fmt_hms(seconds):
+    """Compact duration: '1h 03m', '12m 40s', '45s'. For the cumulative
+    compute figure, which can run to hours over a long sweep."""
+    s = int(max(0.0, float(seconds)))
+    h, rem = divmod(s, 3600)
+    m, sec = divmod(rem, 60)
+    if h:
+        return f"{h}h {m:02d}m"
+    if m:
+        return f"{m}m {sec:02d}s"
+    return f"{sec}s"
+
+
+def _load_wall_history(flow_dir=FLOW_DIR):
+    """Seed the ETA cost model from wall times already on disk. Every cell
+    that finished on a prior run wrote its total wall time to its
+    meta_<tag>.json sidecar, so we can recover the (N, wall_s) cost trend
+    immediately at startup instead of re-learning it from scratch each run.
+    Without this, a resumed sweep (or an os.execv hot-reload) starts with an
+    empty cost model right after the cheap cells are all cached — i.e. the
+    ETA is cold exactly when the expensive tail begins. Best-effort; returns
+    a list of (N, wall_s) tuples."""
+    samples = []
+    for p in glob.glob(os.path.join(flow_dir, "meta_*.json")):
+        try:
+            with open(p) as fh:
+                m = json.load(fh)
+            N, w = m.get("N"), m.get("wall_s")
+            if N and w and float(w) > 0:
+                samples.append((int(N), float(w)))
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+    return samples
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -286,18 +339,28 @@ class _ShapeRefresher:
     render is in flight, exactly one more render is scheduled afterwards
     (so the final state is never missed) rather than queueing many.
 
+    `periodic_s` (>0) adds a wall-clock heartbeat: if that many seconds pass
+    with no render, the thread forces one even though no new cell finished.
+    Without it, a long high-N cell could grind for many minutes during which
+    nothing redraws, so edits / newly-flagged cells stay invisible. 0 turns
+    the heartbeat off (pure request-driven, the original behaviour).
+
     Why time-throttled instead of every-N-cells: the refresh re-reads every
     flow_*.csv on disk, so its cost grows with the sweep. A fixed cell count
     made the stalls lengthen over time; a wall-clock floor keeps plot churn
     bounded no matter how large the run or how fast cells complete.
     """
 
-    def __init__(self, min_interval_s=10.0):
+    def __init__(self, min_interval_s=10.0, periodic_s=0.0):
         self.min_interval_s = float(min_interval_s)
+        self.periodic_s = max(0.0, float(periodic_s))
         self._lock = threading.Lock()
         self._wake = threading.Event()
         self._pending = False
         self._stop = False
+        # 0.0 == "never rendered": with the heartbeat on this makes the first
+        # loop render immediately, so a relaunch shows the current grid at once
+        # instead of after one full interval.
         self._last_run = 0.0
         self._thread = threading.Thread(target=self._loop, daemon=True,
                                         name="shape-refresh")
@@ -311,7 +374,16 @@ class _ShapeRefresher:
 
     def _loop(self):
         while True:
-            self._wake.wait()
+            if self._stop and not self._pending:
+                return
+            # Block until either a request wakes us or — if the heartbeat is
+            # on — the periodic deadline elapses, whichever comes first.
+            if self.periodic_s > 0:
+                timeout = max(0.0, (self._last_run + self.periodic_s)
+                              - time.time())
+                self._wake.wait(timeout)
+            else:
+                self._wake.wait()
             if self._stop and not self._pending:
                 return
             # Honour the minimum interval between renders, but stay
@@ -323,16 +395,19 @@ class _ShapeRefresher:
                 if self._stop and not self._pending:
                     return
                 time.sleep(min(0.1, max(0.0, deadline - time.time())))
+            # Render if a request is pending OR the heartbeat is due (so the
+            # plots advance even with no new data).
+            periodic_due = (self.periodic_s > 0 and
+                            (time.time() - self._last_run) >= self.periodic_s)
             with self._lock:
-                if not self._pending:
-                    self._wake.clear()
-                    if self._stop:
-                        return
-                    continue
+                do_render = self._pending or periodic_due
                 self._pending = False
                 self._wake.clear()
-            _refresh_shape_analysis()
-            self._last_run = time.time()
+            if self._stop and not do_render:
+                return
+            if do_render:
+                _refresh_shape_analysis()
+                self._last_run = time.time()
 
     def stop(self, final_refresh=False):
         """Stop the background thread. The caller is responsible for any
@@ -408,7 +483,9 @@ def build_status(phase, started_at, n_total, n_done, n_failed,
                  last_cell=None, next_cell=None,
                  in_flight=None,
                  calibration=None,
-                 eta_sec_override=None):
+                 eta_sec_override=None,
+                 compute_spent_sec=None,
+                 cells_done_session=None):
     """Assemble a status dict for write_status_json.
 
     All values are JSON-safe (no numpy scalars, no NaN/Inf passed
@@ -421,10 +498,21 @@ def build_status(phase, started_at, n_total, n_done, n_failed,
     these so the user can see all parallel work, not just one
     "next" cell. `next_cell` is kept for backward compatibility:
     we set it to the first in_flight item if any.
+
+    `compute_spent_sec` is the cumulative compute already invested across
+    ALL runs (sum of every completed cell's wall time, recovered from the
+    meta sidecars at startup + this session). It's CPU-time summed over
+    cells, not wall-clock — cells run in parallel — so it's the "machine
+    time burned" figure, independent of the per-session `elapsed_sec`.
+    `cells_done_session` is how many cells THIS run finished; when given it
+    drives the rate so a relaunch (where n_done already counts cached cells)
+    doesn't report an absurd cells/min off a near-zero elapsed.
     """
     now = time.time()
     elapsed = now - started_at if started_at else 0
-    rate = (n_done / elapsed * 60.0) if (elapsed > 0 and n_done > 0) else None
+    # Rate from THIS session's completions, not the cached-inclusive n_done.
+    rate_n = cells_done_session if cells_done_session is not None else n_done
+    rate = (rate_n / elapsed * 60.0) if (elapsed > 0 and rate_n > 0) else None
     remaining = max(0, n_total - n_done - n_failed)
     eta = (remaining / (rate / 60.0)) if (rate and rate > 0) else None
 
@@ -447,6 +535,8 @@ def build_status(phase, started_at, n_total, n_done, n_failed,
         "started_at": started_at,
         "now": now,
         "elapsed_sec": round(elapsed, 1),
+        "compute_spent_sec": (round(float(compute_spent_sec), 1)
+                              if compute_spent_sec else None),
         "rss_mb": round(get_rss_mb(), 1) if get_rss_mb() else None,
         "rss_peak_mb": round(get_rss_peak_mb(), 1) if get_rss_peak_mb() else None,
         "n_total": n_total,
@@ -782,6 +872,69 @@ def _write_cell_meta(work_item, cell, res, params, mu_table, csv_path, wall_s):
                 pass
 
 
+def _write_fail_sidecar(work_item, reason, detail, csv_path):
+    """Record an in-worker failure next to the CSV that was never written, so
+    the heatmap can mark the cell instead of showing a bare 'not run' gap.
+    `reason` is the bucket from _classify_fail_reason; `detail` is the raw
+    message (it carries the peak degree for a max_degree hit). Atomic, and
+    itself best-effort — a failed cell must not be made worse by a failed
+    marker write.
+    """
+    rec = {"reason": reason, "detail": str(detail)[:300]}
+    if work_item[0] == "torus":
+        _, d, N, seed = work_item
+        rec.update(kind="torus", d=d, N=N, seed=seed)
+    else:
+        _, k, T, lb, N, seed = work_item
+        rec.update(kind="cell", k=k, T=T, lb=lb, N=N, seed=seed)
+    path = _sidecar_path(csv_path, "fail", "json")
+    tmp = f"{path}.tmp.{os.getpid()}"
+    try:
+        with open(tmp, "w") as fh:
+            json.dump(rec, fh)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except OSError:
+        pass
+    finally:
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+
+def _clear_fail_sidecar(csv_path):
+    """Remove any stale fail sidecar for a cell that has now succeeded, so a
+    cell that failed on a previous run and succeeds on a rerun stops being
+    marked as failed."""
+    try:
+        os.remove(_sidecar_path(csv_path, "fail", "json"))
+    except OSError:
+        pass
+
+
+def _write_mu_failures(grid_ktl, mu_table, cal_failures, path):
+    """Write the calibration-failure ledger: one entry per (k, T, lb) in the
+    grid that has no μ in the table (so every N for it was dropped before it
+    could run). Reason comes from this run's calibration errors when present,
+    so a max-degree cap hit during the calibration build is labelled as such.
+    Rewritten every run from the current grid-vs-table state, so a cell that
+    starts calibrating successfully drops out of the ledger automatically.
+    """
+    out = {}
+    for (k, T, lb) in grid_ktl:
+        key = mu_key(k, T, lb)
+        if key in mu_table:
+            continue
+        msg = cal_failures.get(key, "no μ entry (calibration not run or failed)")
+        out[key] = {"k": k, "T": T, "lb": lb,
+                    "reason": _classify_fail_reason(msg),
+                    "detail": str(msg)[:300]}
+    write_status_json(path, out)   # generic atomic JSON writer (tmp + rename)
+
+
 def _run_one(work_item, params, mu_table):
     """Worker entry point: run one torus ref or sweep cell to
     completion, write its flow CSV, return a small result dict.
@@ -813,6 +966,9 @@ def _run_one(work_item, params, mu_table):
                             lanczos_m=params["lanczos_m"],
                             half_window=params["half_window"])
         write_flow_csv(res, csv_path)
+        # This cell produced data — drop any fail marker left by a previous
+        # run so it stops showing as failed in the heatmap.
+        _clear_fail_sidecar(csv_path)
         # Tier-2: persist the SLQ Ritz quadrature so d_s(t) can be
         # re-extracted (re-grid / deeper-UV / re-window) without re-running
         # SLQ. Tier-1: enriched topology + provenance + equilibration trace.
@@ -851,10 +1007,14 @@ def _run_one(work_item, params, mu_table):
                 "shape": shape, "ds_lo": ds_lo, "ds_hi": ds_hi}
     except Exception as e:
         wall = time.time() - t0
-        print(f"[{tag}] FAILED in {wall:.1f}s: "
-              f"{type(e).__name__}: {e}", flush=True)
+        detail = f"{type(e).__name__}: {e}"
+        reason = _classify_fail_reason(str(e))
+        print(f"[{tag}] FAILED in {wall:.1f}s: {detail}", flush=True)
+        # Persist why, so the heatmap can mark this cell (max_degree cap hit
+        # vs other error) instead of leaving an unexplained gap.
+        _write_fail_sidecar(work_item, reason, detail, csv_path)
         return {"work_item": work_item, "ok": False, "wall_s": wall,
-                "error": f"{type(e).__name__}: {e}"}
+                "reason": reason, "error": detail}
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -1024,6 +1184,7 @@ def main(argv=None):
     needed_keys = {(k, T, lb) for (k, T, lb, _) in cells}
     missing = sorted({(k, T, lb) for (k, T, lb) in needed_keys
                       if mu_key(k, T, lb) not in mu_table})
+    cal_failures = {}        # mu_key -> error message, filled if we calibrate
     if missing:
         print(f"\n  μ-calibration missing for {len(missing)} (k, T, lb) "
               f"tuple(s) — auto-calibrating before sweep starts:",
@@ -1044,7 +1205,7 @@ def main(argv=None):
         # Do it. calibrate_missing parallelises by default and persists
         # the table to disk after each successful cell, so a partial
         # run is recoverable.
-        mu_table, n_done, n_failed = calibrate_missing(
+        mu_table, n_done, n_failed, cal_failures = calibrate_missing(
             missing, ec=EC, verbose=True)
         if n_failed:
             still_missing = [c for c in missing
@@ -1062,10 +1223,21 @@ def main(argv=None):
             print(f"  proceeding with {len(cells)}/{before} cells",
                   flush=True)
             if not cells:
+                # Still record why before bailing, so the heatmap explains
+                # the empty result instead of just vanishing.
+                _write_mu_failures(needed_keys, mu_table, cal_failures,
+                                   MU_FAILURES_JSON)
                 raise SystemExit("no calibratable cells left.")
         else:
             print(f"  all {len(missing)} calibrations succeeded; "
                   f"sweep starting now.", flush=True)
+
+    # Record (or clear) the calibration-failure ledger so shape_analysis can
+    # mark cells that were dropped before they could run. Derived from the
+    # full grid vs the μ table, so it's correct on resume and self-clears
+    # when a previously-failed cell calibrates. `cal_failures` is empty when
+    # no calibration ran this session.
+    _write_mu_failures(needed_keys, mu_table, cal_failures, MU_FAILURES_JSON)
 
     t_total = time.time()
     classifications = []  # rows: (k, T, lb, N, seed, shape, ds_min, ds_max)
@@ -1150,10 +1322,32 @@ def main(argv=None):
     # the background by a dedicated thread, throttled to at most once every
     # SHAPE_REFRESH_SECS, so plotting never blocks worker dispatch. The
     # dispatch loop only *requests* refreshes; the thread coalesces them.
-    eta_done_samples = []
+    eta_done_samples = _load_wall_history(FLOW_DIR)
+    if eta_done_samples:
+        _prior_compute = sum(w for _, w in eta_done_samples)
+        print(f"  ETA warm-start: recovered {len(eta_done_samples)} prior "
+              f"cell wall-time(s) from {FLOW_DIR}/meta_*.json — the cost-vs-N "
+              f"trend persists across restarts", flush=True)
+        print(f"  compute already invested: {_fmt_hms(_prior_compute)} "
+              f"(summed cell wall time across all prior runs)", flush=True)
     eta_remaining = Counter(_work_N(w) for w in work)
     SHAPE_REFRESH_SECS = float(getattr(args, "shape_refresh_secs", 10.0))
-    shape_refresher = _ShapeRefresher(min_interval_s=SHAPE_REFRESH_SECS)
+    # Periodic redraw heartbeat from config.toml ([dashboard].redraw_interval_s,
+    # default 10s; 0 = off). When on, it also governs the min-interval so the
+    # configured cadence is what you actually get (a small value isn't blocked
+    # by the larger event-throttle); when off, fall back to the CLI throttle
+    # and render only when cells land.
+    redraw_s = REDRAW_INTERVAL_S
+    throttle_s = redraw_s if redraw_s > 0 else SHAPE_REFRESH_SECS
+    shape_refresher = _ShapeRefresher(min_interval_s=throttle_s,
+                                      periodic_s=redraw_s)
+    if redraw_s > 0:
+        print(f"  plots redraw at least every {redraw_s:g}s "
+              f"(config [dashboard].redraw_interval_s; 0 disables)", flush=True)
+    else:
+        print("  periodic plot redraw disabled "
+              "([dashboard].redraw_interval_s = 0); plots refresh on new data",
+              flush=True)
 
     n_done = cached_cell_count
     n_failed = 0
@@ -1358,6 +1552,8 @@ def main(argv=None):
                             last_cell=last_cell_persistent,
                             in_flight=in_flight_list,
                             eta_sec_override=eta,
+                            compute_spent_sec=sum(w for _, w in eta_done_samples),
+                            cells_done_session=max(0, n_done - cached_cell_count),
                         ))
 
                         # Ask the background thread to regenerate plots.
