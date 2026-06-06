@@ -54,18 +54,6 @@ shows incoming data and does not start or stop anything.
 
 Later runs are the same — the script reuses the venv and relaunches. 
 
-```bash
-./setup.sh        # macOS / Linux
-setup.bat          # Windows
-```
-
-…then start it yourself:
-
-```bash
-.venv/bin/python main.py            # macOS / Linux
-.venv\Scripts\python.exe main.py    # Windows
-```
-
 ### Manual setup (if the script won't run)
 
 Any platform, no helper script:

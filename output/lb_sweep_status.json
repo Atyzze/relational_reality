@@ -1,27 +1,27 @@
 {
   "phase": "running",
   "started_at": 1780765304.8914485,
-  "now": 1780766822.6932771,
-  "elapsed_sec": 1517.8,
-  "compute_spent_sec": 1235953.1,
-  "rss_mb": 334.5,
+  "now": 1780766909.1152341,
+  "elapsed_sec": 1604.2,
+  "compute_spent_sec": 1237326.9,
+  "rss_mb": 313.9,
   "rss_peak_mb": 339.6,
   "n_total": 9625,
-  "n_done": 6982,
+  "n_done": 6984,
   "n_failed": 0,
-  "n_remaining": 2643,
-  "rate_per_min": 12.49,
-  "eta_sec": 297497,
+  "n_remaining": 2641,
+  "rate_per_min": 11.89,
+  "eta_sec": 297878,
   "last_cell": {
     "k": 10,
     "T": 0.004,
     "lb": 0.9,
     "N": 256000,
-    "seed": 46,
+    "seed": 45,
     "shape": "monotone_rising",
-    "ds_min": 2.1828117573191497,
-    "ds_max": 10.340097099151027,
-    "wall_s": 607.9
+    "ds_min": 2.17197779671323,
+    "ds_max": 10.089277242074324,
+    "wall_s": 700.0
   },
   "next_cell": {
     "k": 12,
@@ -56,27 +56,11 @@
     },
     {
       "kind": "cell",
-      "k": 10,
-      "T": 0.004,
-      "lb": 0.9,
-      "N": 256000,
-      "seed": 45
-    },
-    {
-      "kind": "cell",
       "k": 11,
       "T": 0.004,
       "lb": 0.9,
       "N": 256000,
       "seed": 42
-    },
-    {
-      "kind": "cell",
-      "k": 11,
-      "T": 0.004,
-      "lb": 0.9,
-      "N": 256000,
-      "seed": 43
     },
     {
       "kind": "cell",
@@ -285,6 +269,22 @@
       "lb": 0.999,
       "N": 256000,
       "seed": 44
+    },
+    {
+      "kind": "cell",
+      "k": 12,
+      "T": 0.016,
+      "lb": 0.999,
+      "N": 256000,
+      "seed": 45
+    },
+    {
+      "kind": "cell",
+      "k": 12,
+      "T": 0.016,
+      "lb": 0.999,
+      "N": 256000,
+      "seed": 46
     }
   ],
   "build": {
