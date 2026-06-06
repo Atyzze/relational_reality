@@ -1,186 +1,144 @@
+#!/usr/bin/env python3
+"""
+relational-reality
+==================
+Measuring the spectral dimension d_s of graphs grown from a configurable
+Hamiltonian, and searching for where that geometry looks 4-dimensional.
+
+Just run it — no arguments:
+
+    python main.py
+
+That opens the live dashboard in your browser and immediately starts
+sweeping the grid defined in config.toml, resuming wherever a previous run
+left off (already-computed cells are skipped). The shape analysis refreshes
+automatically as new data arrives.
+
+A few optional flags (everything else is config.toml):
+
+    python main.py --port 8001      # bind a different port (default 8000)
+    python main.py --host 0.0.0.0   # expose on your network (read-only, untrusted)
+    python main.py --no-browser     # don't auto-open a tab
+
+To stop the workers, press Ctrl-C in this terminal. The web page only
+reports incoming data — it does not start/stop anything.
+
+What to edit:
+  • config.toml                the sweep grid (k, T, lb, N, seed)
+  • src/core/project_constants.py  internal physics/probe constants (rarely)
+"""
+
+import argparse
 import os
 import sys
-import argparse
-import re
-import shutil
-import filecmp
-import subprocess
-import difflib
+import threading
+import webbrowser
 
-# --- CONFIG ---
-DATA_DIR = "data"
-ENGINE_FILE = "engine.py"
-DRIVE_FILE = "drive.py"
+ROOT = os.path.dirname(os.path.abspath(__file__))
+SRC = os.path.join(ROOT, "src")
+OUTPUT = os.path.join(ROOT, "output")
 
-def parse_existing_versions(data_dir):
-    """
-    Scans data/ folder to build a global catalog of versions.
-    Returns:
-        versions: list of (e_id, d_id, folder_path)
-        max_e: integer
-        max_d: integer
-    """
-    if not os.path.exists(data_dir): return [], 0, 0
+# Make both the source packages (core, metrics, ds4_search, shape_analysis)
+# importable from anywhere.
+for p in (SRC, ROOT):
+    if p not in sys.path:
+        sys.path.insert(0, p)
 
-    versions = []
-    max_e = 0
-    max_d = 0
 
-    pattern = re.compile(r"^E(\d+)D(\d+)$")
+def _ensure_output():
+    os.makedirs(os.path.join(OUTPUT, "flow"), exist_ok=True)
 
-    for d_name in os.listdir(data_dir):
-        match = pattern.match(d_name)
-        if match:
-            e_id = int(match.group(1))
-            d_id = int(match.group(2))
-            full_path = os.path.join(data_dir, d_name)
-            versions.append((e_id, d_id, full_path))
 
-            if e_id > max_e: max_e = e_id
-            if d_id > max_d: max_d = d_id
+def _grid_args():
+    """Translate the sweep grid (from config.toml, via core.project_constants) into
+    CLI args for the sweep backend that the live app spawns."""
+    from core import project_constants as cfg
 
-    return versions, max_e, max_d
+    def csv(xs):
+        return ",".join(str(x) for x in xs)
+    return [
+        "--k", csv(cfg.K_ALL),
+        "--T", csv(cfg.T_ALL),
+        "--lb", csv(cfg.LB_ALL),
+        "--N", csv(cfg.N_ALL),
+        "--seeds", csv(cfg.SEEDS),
+    ]
 
-def identify_file_version(current_file, filename_in_archive, versions, id_index):
-    """
-    Checks if 'current_file' matches any existing version in the archives.
-    id_index: 0 for Engine ID (E), 1 for Drive ID (D) inside the 'versions' tuple.
-    Returns: matched_id (int) or None
-    """
-    for v in versions:
-        e_id, d_id, folder_path = v
-        archived_file = os.path.join(folder_path, filename_in_archive)
 
-        # If the archived file exists and matches current content
-        if os.path.exists(archived_file) and filecmp.cmp(current_file, archived_file, shallow=False):
-            return v[id_index] # Return the E_ID or D_ID found
-    return None
+def _run_sweep_worker(rest):
+    """Internal entry: the live app (and the sweep's own hot-reload) launch
+    the batch worker as `python main.py __sweep__ …`. Not part of the public
+    interface — users never call this directly."""
+    _ensure_output()
+    os.chdir(OUTPUT)              # all sweep output lands under output/
+    from ds4_search import sweep_runner
+    sweep_runner.main(rest)
 
-def generate_diff(new_file_path, old_file_path, diff_output_path):
-    """Generates a unified diff between an old file and a new file."""
-    if not os.path.exists(old_file_path):
-        return
 
-    with open(old_file_path, 'r') as f_old, open(new_file_path, 'r') as f_new:
-        old_lines = f_old.readlines()
-        new_lines = f_new.readlines()
+def _run_dashboard_and_sweep(host="127.0.0.1", port=8000, open_browser=True):
+    """The default: serve the live dashboard and auto-start the sweep."""
+    from ds4_search import live_app
 
-    diff = difflib.unified_diff(
-        old_lines, new_lines,
-        fromfile=os.path.basename(old_file_path) + " (Previous)",
-        tofile=os.path.basename(new_file_path) + " (New)",
-        n=3 # Number of context lines
-    )
+    port = str(port)
+    url = f"http://{host}:{port}/"
+    _ensure_output()
 
-    with open(diff_output_path, 'w') as f_out:
-        f_out.writelines(diff)
+    argv = [
+        "--dir", OUTPUT,
+        "--host", host,
+        "--port", port,
+        "--auto-start",          # begin sweeping immediately
+    ] + _grid_args()
 
-def detect_and_archive(data_dir, current_engine, current_drive):
-    """
-    Determines the correct E and D IDs for the current root files.
-    Creates a new folder if this specific combination doesn't exist,
-    and generates a diff if the files are new.
-    """
-    existing_versions, max_e, max_d = parse_existing_versions(data_dir)
+    print(f"  Opening the live dashboard at {url}")
+    print(f"  Sweeping the grid from config.toml — press Ctrl-C here to stop.\n")
+    # Pop the browser once the server has had a moment to bind.
+    if open_browser:
+        threading.Timer(1.5, lambda: _open(url)).start()
+    live_app.main(argv)          # blocks until Ctrl-C
 
-    # 1. Identify ENGINE Version
-    target_e = identify_file_version(current_engine, ENGINE_FILE, existing_versions, 0)
-    is_new_e = False
 
-    if target_e is None:
-        target_e = max_e + 1
-        is_new_e = True
-        print(f"🆕 New Engine detected (will be E{target_e})")
-    else:
-        print(f"✅ Engine matches existing version E{target_e}")
+def _open(url):
+    print(f"  → {url}")
+    try:
+        webbrowser.open(url)
+    except Exception:
+        pass
 
-    # 2. Identify DRIVE Version
-    target_d = identify_file_version(current_drive, DRIVE_FILE, existing_versions, 1)
-    is_new_d = False
-
-    if target_d is None:
-        target_d = max_d + 1
-        is_new_d = True
-        print(f"🆕 New Drive detected (will be D{target_d})")
-    else:
-        print(f"✅ Drive matches existing version D{target_d}")
-
-    # 3. Construct the Target Folder for this Combo
-    version_str = f"E{target_e}D{target_d}"
-    new_folder = os.path.join(data_dir, version_str)
-
-    if os.path.exists(new_folder):
-        print(f"📂 Using existing configuration: {version_str}")
-    else:
-        print(f"🔨 Creating new configuration: {version_str}")
-        os.makedirs(new_folder, exist_ok=True)
-
-        shutil.copy2(current_engine, os.path.join(new_folder, ENGINE_FILE))
-        shutil.copy2(current_drive, os.path.join(new_folder, DRIVE_FILE))
-
-        # --- Generate Diffs for New Files ---
-        if is_new_e and max_e > 0:
-            # Find any previous engine version to diff against
-            for v in existing_versions:
-                if v[0] == max_e:
-                    old_e_path = os.path.join(v[2], ENGINE_FILE)
-                    diff_path = os.path.join(new_folder, "engine_diff.txt")
-                    generate_diff(current_engine, old_e_path, diff_path)
-                    print(f"   📝 Generated engine_diff.txt (compared against E{max_e})")
-                    break
-
-        if is_new_d and max_d > 0:
-            # Find any previous drive version to diff against
-            for v in existing_versions:
-                if v[1] == max_d:
-                    old_d_path = os.path.join(v[2], DRIVE_FILE)
-                    diff_path = os.path.join(new_folder, "drive_diff.txt")
-                    generate_diff(current_drive, old_d_path, diff_path)
-                    print(f"   📝 Generated drive_diff.txt (compared against D{max_d})")
-                    break
-
-    return new_folder
 
 def main():
-    # 1. Parse ONLY the target-version flag if present, let the rest pass through
-    parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument("-t", "--target-version", type=str)
-    args, unknown_args = parser.parse_known_args()
+    # Hidden worker route used by the app to spawn the batch sweep.
+    # Must stay first and bypass argparse entirely: everything after the
+    # marker is the sweep_runner's own CLI, not ours.
+    if len(sys.argv) > 1 and sys.argv[1] == "__sweep__":
+        _run_sweep_worker(sys.argv[2:])
+        return
 
-    os.makedirs(DATA_DIR, exist_ok=True)
+    # Everything else (including no args) → the one thing this project does:
+    # serve the dashboard + auto-start the sweep. A few optional flags let
+    # you move it off the default port/host without editing code.
+    ap = argparse.ArgumentParser(
+        prog="main.py",
+        description="Serve the live d_s dashboard and auto-start the sweep "
+                    "(grid comes from config.toml). Run with no arguments "
+                    "for the defaults.",
+    )
+    ap.add_argument("--port", type=int, default=8000,
+                    help="HTTP port to bind (default 8000; 0 = let the OS "
+                         "pick a free port).")
+    ap.add_argument("--host", default="127.0.0.1",
+                    help="Bind address (default 127.0.0.1, localhost-only). "
+                         "Use 0.0.0.0 to expose on your network — the page "
+                         "is read-only but unauthenticated, so only do this "
+                         "on networks you trust.")
+    ap.add_argument("--no-browser", action="store_true",
+                    help="Don't auto-open a browser tab (the URL is still "
+                         "printed).")
+    args = ap.parse_args()
 
-    target_folder = ""
+    _run_dashboard_and_sweep(host=args.host, port=args.port,
+                             open_browser=not args.no_browser)
 
-    # --- STRATEGY A: FORCE SPECIFIC VERSION ---
-    if args.target_version:
-        v_tag = args.target_version.upper()
-        target_folder = os.path.join(DATA_DIR, v_tag)
-        if not os.path.exists(target_folder):
-            print(f"❌ Error: Target version {v_tag} does not exist.")
-            sys.exit(1)
-        print(f"🔄 Forcing execution of archived version: {v_tag}")
-
-    # --- STRATEGY B: DETECT OR CREATE FROM ROOT ---
-    else:
-        if not os.path.exists(ENGINE_FILE) or not os.path.exists(DRIVE_FILE):
-            print("❌ Error: engine.py or drive.py missing in root directory.")
-            sys.exit(1)
-
-        target_folder = detect_and_archive(DATA_DIR, ENGINE_FILE, DRIVE_FILE)
-
-    # 2. EXECUTE THE WORKER
-    script_path = os.path.join(target_folder, DRIVE_FILE)
-
-    # Pass unknown_args (like -N, -s) to the worker
-    cmd = [sys.executable, script_path] + unknown_args
-
-    print(f"🚀 Launching: {script_path}")
-    print("-" * 40)
-
-    if sys.platform == 'win32':
-        subprocess.call(cmd)
-    else:
-        os.execv(sys.executable, cmd)
 
 if __name__ == "__main__":
     main()

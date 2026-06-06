@@ -1,135 +1,149 @@
-# Relational Reality: a network evolution engine
+# relational-reality
 
-**An active research project simulating the emergence of geometry from random networks.**
-
-This engine simulates a "Hamiltonian Routing" dynamic where nodes actively rewire themselves to minimize local stress.
-
-We are mapping the phase transitions that occur when simple local rules give rise to complex global structures.
-
-### ⚡ Quick Start
-
-**1. Install Dependencies**
-
-```bash
-pip install -r requirements.txt
-
-```
-
-**2. System Check (`main.py`)**
-Run a quick performance test. This does **not** save graph state.
-
-```bash
-python main.py
-
-```
-
-* *Default:* `N=100` (Calculates in ~1 min on older hardware).
-* *High Res:* `python main.py -N 1000` (Expect longer wait times, but more pixels).
+Measuring the **spectral dimension** `d_s` of graphs grown from a configurable
+Hamiltonian, and searching for where that geometry looks **4-dimensional**.
 
 ---
 
-### 🧬 Core Workflow
-
-**1. Start the Simulation (`drive.py`)**
-This is the main driver. It evolves the topology, finding equilibrium states and storing progress.
+## Quickstart
 
 ```bash
-python drive.py
-
+./setup.sh
 ```
 
-**2. Watch it Evolve**
-Get immediate feedback on system performance in a separate terminal:
+That's the whole thing. `setup.sh` creates a local virtual environment,
+installs the dependencies, and then **launches the project automatically** —
+no second step. It opens the live dashboard in your browser and immediately
+starts sweeping the grid defined in `config.toml`, resuming wherever a previous
+run left off (already-computed cells are skipped). The shape analysis
+(histogram + heatmap) refreshes automatically as new data arrives.
 
-```bash
-watch -n 1 python bench1.py
+**To stop**, press `Ctrl-C` in the terminal. That tears down both the web
+server and the sweep workers. The web page is purely a *reporting* surface —
+it shows incoming data and does not start or stop anything.
 
+Later runs are the same — `./setup.sh` reuses the venv and relaunches. To set
+up (or refresh dependencies) **without** launching, use `./setup.sh --no-run`,
+then start it yourself with `.venv/bin/python main.py`.
+
+Requires Python 3.11+ (the config loader uses the stdlib `tomllib`).
+
+---
+
+## What you change: `config.toml`
+
+One file defines *what* gets swept — the parameter ranges:
+
+```toml
+[grid]
+k  = [0, 1, 2, ...]            # mean target degree
+T  = [0, 0.001, 0.005, ...]    # growth temperature
+lb = [0, 0.25, 0.5, 0.9, ...]  # locality bias — the main d_s→4 dial
+N  = [1000, 4000, 16000, ...]  # graph sizes (the finite-size ladder)
+seed = 42                      # base RNG seed for graph growth
+n_seeds = 5                    # graphs per cell: runs seeds 42..46 so you
+                               # see the seed-to-seed spread, not one draw
 ```
 
-**3. Visualize & Analyse**
-
-* **`visualize.py`**: Renders frames from the simulation history to visualize phase transitions.
-* **`analyse.py`**: Tallies results to identify trends across parameter regimes.
-* **`enhance.py`**: High-resolution zoom for specific windows.
-
----
-
-### 🔬 Key Findings (So Far)
-
-We have swept the system size up to **N=51200** and identified multiple stable topological phases.
-
-* **Scale Invariance:** The emergent behavior appears identical regardless of size. The only difference is the pixel density; the transitions and geometry remain consistent.
-* **Integer Thresholds:** Interesting physics emerge specifically when the average connection count () breaches certain integer values.
-
-### ⚙️ The Physics (Parameters)
-
-You can modify `engine.py` to explore different regimes. The universe is controlled by three primary knobs:
-
-**1. System Size (`N`)**
-
-
-**2. The Connection Cost (`mu`)**
-
-* A single parameter that controls network density.
-* **High** `mu`: High pressure against connections.
-* **Low** `mu`: Connections are cheap; the network becomes dense.
-* *Observation:* Increasing `mu` suppresses the K-mean (average degree). We are currently mapping exactly what happens as `mu` forces K-mean across integer boundaries.
-
-**3. Non-Local Interaction (`P_TRIADIC_TOGGLE`)**
-
-* How often do we allow non-local connections?
-* *Current Setting:* `0.999`. This means we allow "quantum magic" (non-local wiring) only **0.1%** of the time. This tiny fraction is critical, without it, no geometry can ever spawn, it needs connection between at least 2 distinct different points/nodes.
+The full sweep is the cross-product of the four lists, run once per seed
+(`n_seeds` of them). Each cell→seed writes its own `flow_*.csv`, so a multi-seed
+run resumes per-seed and the heatmap can both average d_s and report its
+spread. More seeds = more confidence per cell but linearly more compute; to go
+faster, narrow the grid (fewer k / ℓ / T / N) rather than dropping seeds, since
+the small-N cells are cheap and that is where the spread is largest. Set
+`n_seeds = 1` for the old single-seed behaviour. Edit, rerun `./setup.sh` (or
+`.venv/bin/python main.py`), and new cells fill in alongside the old ones.
+(Internal physics/probe constants live in `src/core/project_constants.py`; you
+rarely touch those.)
 
 ---
 
-### 🌍 Relevance for 2026
+## The mental model
 
-Why simulate this? As we move toward massive decentralized systems, mesh networks, and bio-mimetic AI, understanding how **stability emerges from chaos** is critical. This project demonstrates how robust, self-healing architectures can arise naturally from simple energy minimization rules, without a central architect.
+This is **one** physics codebase. The same backend (`src/core` + `src/metrics`)
+both grows the graphs and measures `d_s(t)` on them. On top of it sit two views
+of the same data:
+
+- **Search for d_s → 4** — sweep the locality-bias dial `lb` and watch the
+  running spectral dimension, looking for the region where geometry sits at
+  `d_s ≈ 4`. This is the live dashboard.
+- **Compare curve shapes against reference lattices** — classify each
+  `d_s(t)` curve's shape and compare the population against known tori. This is
+  the shape analysis (the histogram + heatmap), refreshed automatically as the
+  sweep runs.
+
+The reference lattices (2D/3D/… tori) are **always shown** on the live plot as
+dashed grey curves — comparing against them is the whole point.
 
 ---
 
-### 🤝 Call for Collaboration
+## What's where
 
-**This is an invitation.**
-There is much more to discover here than one person can compute.
+The top level is deliberately small: the launcher, its config, dependency
+files, and two folders — **source** vs **generated**.
 
-* If you have the compute power to render high-N frames...
-* If you can optimize the engine for efficiency...
-* If you want to help map the phase diagram...
+```
+relational-reality/
+├── main.py             ← the only thing you run (no arguments)
+├── config.toml         ← the sweep grid you edit (k, T, lb, N, seed, n_seeds)
+├── requirements.txt    ← Python dependencies
+├── setup.sh            ← one-shot: venv + install + launch
+├── README.md
+├── src/                ← source code (never written to at runtime)
+│   ├── core/               shared backend
+│   │   ├── physics_engine.py     graph growth from the Hamiltonian (numba kernels)
+│   │   ├── project_constants.py  physics/probe constants; loads the grid from config.toml
+│   │   ├── disk_io.py            CSV / JSON / log helpers, μ-table load/save
+│   │   ├── graph_builder.py      graph build + μ-calibration  (library; no CLI)
+│   │   ├── cell_tests.py         build one cell (basin or torus reference) + tests
+│   │   └── flow_probe.py         the d_s(t) "flow" probe — the core measurement
+│   ├── metrics/            spectral-dimension library:
+│   │   ├── random_walk.py          random-walk return-probability d_s probe
+│   │   ├── stochastic_lanczos.py   SLQ (Lanczos) d_s probe
+│   │   ├── hausdorff_dimension.py  Hausdorff dimension probes
+│   │   ├── size_extrapolation.py   finite-size extrapolation to large N
+│   │   ├── reference_lattices.py   reference-lattice builders + registry
+│   │   ├── graph_topology.py       structural graph metrics
+│   │   ├── graph_container.py      Graph container + archive
+│   │   └── (random_walk_fits, bfs_kernels, numba_kernels — internal helpers)
+│   ├── ds4_search/         the d_s→4 search
+│   │   ├── sweep_runner.py     headless grid worker: grows cells, classifies,
+│   │   │                       extrapolates the ETA, refreshes shape analysis
+│   │   ├── live_app.py         the live reporting web server
+│   │   ├── live_app_page.py    the page it serves (HTML/CSS/JS; presentation only)
+│   │   ├── static_dashboard.py renders a standalone offline HTML dashboard
+│   │   └── dashboard_page.py   its page (presentation only)
+│   └── shape_analysis.py   curve-shape classification + histogram/heatmap
+└── output/             ← everything generated lands here
+    ├── flow/               one flow_*.csv per measured cell (the raw d_s(t) curves)
+    ├── mu_table.json       calibrated μ per (k, T, lb)
+    ├── lb_sweep_status.json live sweep status (progress, ETA) the page polls
+    ├── lb_sweep_classifications.csv  shape tag per cell
+    ├── shape_summary.csv   per-cell shape summary (d_s_local, dips, peaks)
+    ├── shape_histogram.png distribution of local spectral dimension
+    ├── shape_heatmap.png   mean d_s over (k, ℓ); rows = T, columns = N
+    └── shape_heatmap_seed_std.png  seed-to-seed spread of d_s (same layout;
+                            written only when n_seeds > 1)
+```
 
-*Evidently a work in progresSs—~𓆙𓂀*
+`main.py` runs the sweep with `output/` as the working directory, which is how
+generated files stay out of `src/`.
 
-<img width="3000" height="2550" alt="E14_N51200_S1000_i000_000_000_k0 000" src="https://github.com/user-attachments/assets/e896d5ab-08eb-470e-9b22-e3495a6405d2" />
+---
 
-<img width="3000" height="2550" alt="E14_N51200_S1000_i000_300_000_k0 048" src="https://github.com/user-attachments/assets/fb50cf47-6fa1-43b4-b9f8-879397a19f47" />
+## Notes
 
-<img width="3000" height="2550" alt="E14_N51200_S1000_i002_000_000_k0 322" src="https://github.com/user-attachments/assets/b8e3e75d-1370-4726-b530-596d4fbb6799" />
-
-<img width="3000" height="2550" alt="E14_N51200_S1000_i002_900_000_k0 476" src="https://github.com/user-attachments/assets/f6ddcdaf-97a7-41b4-b4bd-8208f5b96b4e" />
-
-<img width="3000" height="2550" alt="E14_N51200_S1000_i004_500_000_k0 739" src="https://github.com/user-attachments/assets/32bdb0b8-362c-441c-b844-ef7f7330a972" />
-
-<img width="3000" height="2550" alt="E14_N51200_S1000_i004_900_000_k0 801" src="https://github.com/user-attachments/assets/5b911764-f981-4c75-aa7a-abf25b20c4e3" />
-
-<img width="3000" height="2550" alt="E14_N51200_S1000_i006_600_000_k1 058" src="https://github.com/user-attachments/assets/246e82fa-3c59-47a1-b663-24de9e950fa4" />
-
-<img width="3000" height="2550" alt="E14_N51200_S1000_i009_300_000_k1 383" src="https://github.com/user-attachments/assets/366af857-0eb0-422b-a418-8182d3f48277" />
-
-<img width="3000" height="2550" alt="E14_N51200_S1000_i009_500_000_k1 406" src="https://github.com/user-attachments/assets/749b682b-920d-4381-984d-8022b93cb084" />
-
-<img width="3000" height="2550" alt="E14_N51200_S1000_i009_600_000_k1 418" src="https://github.com/user-attachments/assets/a5c33e44-5bed-4865-b5a2-91f46afad9cf" />
-
-<img width="3000" height="2550" alt="E14_N51200_S1000_i012_400_000_k1 665" src="https://github.com/user-attachments/assets/b595ae64-e8ac-4b2e-a43f-f4356aabf76c" />
-
-<img width="3000" height="2550" alt="E14_N51200_S1000_i015_700_000_k1 862" src="https://github.com/user-attachments/assets/d16b1dcc-2a86-42dc-9c9a-e3d2369b2ad3" />
-
-<img width="3000" height="2550" alt="E14_N51200_S1000_i019_300_000_k1 996" src="https://github.com/user-attachments/assets/ac1f71ad-ce8b-4abf-8338-ae57a9e337a6" />
-
-<img width="3000" height="2550" alt="E14_N51200_S1000_i021_100_000_k2 039" src="https://github.com/user-attachments/assets/adcb09a5-7d42-4c6c-902c-589f457010e8" />
-
-<img width="3000" height="2550" alt="E14_N51200_S1000_i023_000_000_k2 076" src="https://github.com/user-attachments/assets/a324daf5-e0c0-4a9a-97eb-0107cf5760a2" />
-
-
-
-
-
+- **Single entry point.** Modules under `src/` import each other as packages
+  (`from core.flow_probe import …`, `from metrics import …`) and are driven
+  through `main.py`, which puts `src/` and the project root on the path. They
+  aren't meant to be run directly.
+- **The ETA is extrapolated, not naïve.** Cells run smallest-N first and
+  per-cell cost grows steeply with N, so a simple "remaining ÷ average rate"
+  badly underestimates the expensive tail. The sweep instead fits the observed
+  cost-vs-N trend and predicts each remaining cell from its own N.
+- **`d_s` everywhere means the spectral dimension** (the shape summary's
+  `d_s_local` is the local spectral dimension read off at the curve's dip).
+  Hausdorff dimension, where computed, lives in `metrics/` and is named
+  separately.
+- **Reference lattices** are built by `core.cell_tests.build_torus_cell`;
+  analytically-known reference builders live in `metrics/reference_lattices.py`.

@@ -1,0 +1,53 @@
+# config.toml — the sweep grid you can edit
+# ==========================================
+# This is the one file to touch to change *what* gets swept: the parameter
+# ranges the search explores. Everything else (physics constants, probe
+# settings, file layout) is internal and lives in src/core/project_constants.py.
+#
+# Just run:  python main.py
+# It opens the live dashboard and starts sweeping this grid automatically,
+# resuming wherever a previous run left off (already-computed cells are skipped).
+#
+# Each combination of (k, T, lb, N) at the seed below is one "cell": one graph
+# grown from the Hamiltonian, on which the spectral dimension d_s(t) is
+# measured. The actual sweep is the full cross-product of these lists.
+
+[grid]
+
+# k : mean target degree of the grown graph.
+# The connectivity knob. Spans isolated (k=0) up to densely connected (k=32).
+k = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+
+# T : temperature of the graph-growth Monte-Carlo.
+# T=0 is the cold ground state (no thermal noise); higher T adds disorder.
+T = [0, 0.001, 0.004, 0.016, 0.064]
+
+# lb : locality bias — the main dial of the d_s->4 search.
+# How strongly edges prefer to stay local.
+lb = [0.90,0.95,0.99,0.995,0.999]
+
+# N : number of nodes in the graph — the finite-size ladder.
+# Spectral dimension is read off as N grows, so the same (k, T, lb) is measured
+# at several N to see the large-graph limit. NOTE: the largest N values are
+# genuinely expensive (cost grows steeply with N), so a full sweep of the high
+# end takes a long time. The dashboard ETA accounts for this by extrapolating
+# the cost-vs-N trend.
+N = [1_000, 4_000, 16_000, 64_000, 256_000, 1_024_000, 4_096_000, 16_384_000, 65_536_000, 262_144_000, 1_048_576_000]
+
+# seed : base RNG seed for graph growth.
+# n_seeds : how many seeds to run per (k, T, ℓ, N) cell. The sweep runs
+#   seeds  seed, seed+1, …, seed+n_seeds-1  for every cell, so you can see
+#   the graph-to-graph spread of d_s, not just one draw. Each seed writes
+#   its own flow_*.csv (the filenames carry _s<seed>), and the heatmap
+#   averages d_s over the seeds present per cell while also reporting the
+#   seed-to-seed std.
+#
+# n_seeds = 5 is the default. More seeds = more confidence in each cell but
+# linearly more compute (the cost lands hardest on the large-N cells). If a
+# full multi-seed sweep over the whole grid is too slow, the intended way to
+# go faster is to NARROW the grid above (fewer k / ℓ / T / N values, e.g. a
+# single N or a focused ℓ band) rather than to drop seeds — small-N cells are
+# cheap and that is exactly where the seed spread is largest and most useful.
+# Set n_seeds = 1 to recover the old single-seed behaviour.
+seed = 42
+n_seeds = 5

@@ -1,9 +1,10 @@
-numpy==1.26.4
-pandas==2.2.2
-networkx==3.3
-matplotlib==3.9.0
-scipy==1.13.1
-scikit-learn==1.5.0
-tqdm==4.66.4
-numba==0.60.0
-POT==0.9.3
+# Runtime dependencies for relational-reality.
+# Install with:  ./setup.sh   (or:  pip install -r requirements.txt)
+#
+# Only four packages are needed — everything else is the Python standard
+# library. Version floors are conservative; newer releases are fine.
+
+numpy>=1.24
+scipy>=1.10
+numba>=0.58       # JIT kernels for graph growth (the one heavy dependency)
+matplotlib>=3.7   # only used to render the shape histogram + heatmap

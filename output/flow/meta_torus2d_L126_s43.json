@@ -1,0 +1,1 @@
+{"schema": 2, "code_hash": "21f2235d", "ec": -1.0, "max_degree": 24, "prod_sweeps": 3, "n_probes": 60, "lanczos_m": 300, "half_window": 10, "N_eff": 15876, "lam_max_bound": 8.0, "wall_s": 2.3, "t_lo": 0.025000000000000005, "t_hi": 378.00000000000017, "n_t": 240, "kind": "torus", "d": 2, "N": 16000, "seed": 43, "mu": null, "lcc_pct": 100.0, "transitivity": 0.0, "k_top": 4}

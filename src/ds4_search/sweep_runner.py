@@ -1,0 +1,1397 @@
+"""
+ds4_search/sweep_runner.py — Map d_s(t) curve shapes across a (k, lb, N) grid
+====================================================================
+Sweeps locality bias lb at fixed (k, T) for multiple N values, runs
+the d_s(t) flow probe on each cell, and produces an overlay HTML
+per (k, N) panel where curves are color-coded by lb. Designed to
+characterise how the flow shape changes as a function of lb — for
+example, locating a transition between monotone-rising and
+double-peak shapes.
+
+Includes a heuristic shape classifier that tags each curve as one of
+{flat, monotone_rising, single_peak, double_peak, bumpy, undetermined}
+so transitions in shape across lb can be summarised at a glance.
+
+Usage
+-----
+    NOTE: this is the batch worker the dashboard spawns as
+    `python main.py __sweep__ …` (see main.py / ds4_search.live_app).
+    There is no `main.py sweep` subcommand — the example commands below
+    show this module's own argparse interface, which main.py forwards to
+    after the `__sweep__` marker.
+
+    # Single (k, T), sweep lb at one N
+    python main.py sweep --k 9 --T 0.005 --N 64000 \\
+                          --lb 0.93,0.94,0.95,0.99
+
+    # Compare T=0 (ground state) against T=0.005 (low-T basin) —
+    # shows whether thermal noise smooths out a transition seen at T=0
+    python main.py sweep --k 9 --T 0,0.005 --N 64000 \\
+                          --lb 0.93,0.94,0.95,0.99
+
+    # Full (k, T, lb, N) grid
+    python main.py sweep --k 6,8,9 --T 0,0.005 \\
+                          --N 16000,64000,256000 \\
+                          --lb 0.93,0.94,0.95,0.99
+
+    # Use an explicit lb list (file)
+    python main.py sweep --k 9 --T 0.005 --N 64000 \\
+                          --lb-file my_lb_grid.txt
+
+The script reuses cached per-cell flow CSVs when present (skipping
+SLQ recompute), so iterating on the layout/grid is cheap once a
+cell has been run.
+
+Outputs
+-------
+    flow_<tag>.csv / .html               — per-cell flow data
+    lb_sweep_k<K>_N<N>.html              — per-panel overlay (one per k, N)
+    lb_sweep_summary.html                — grid-of-panels summary
+    lb_sweep_classifications.csv         — shape tag per cell
+
+Cost per cell: 1-10 minutes depending on N.
+With 3 k × 10 lb × 3 N = 90 cells, plan for several hours.
+"""
+
+import argparse
+import concurrent.futures
+import threading
+import csv
+import glob
+import hashlib
+import json
+import math
+import multiprocessing as mp
+import os
+import resource
+import sys
+import time
+from collections import Counter, defaultdict
+from dataclasses import dataclass
+
+# ── BLAS thread pinning ───────────────────────────────────────────
+# Must be set BEFORE numpy is imported (here or transitively via
+# core.cell_tests). Each worker process runs one SLQ at a time, and the
+# Lanczos kernel inside it is dominated by sparse matvec — BLAS
+# parallelism barely helps and actively hurts when N workers ×
+# M BLAS-threads oversubscribes the CPU. Setting this once in the
+# parent propagates to every forked worker.
+#
+# `setdefault` so an explicit env override (e.g. for benchmarking
+# single-process BLAS speed) still wins.
+for _v in ("OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "OMP_NUM_THREADS",
+          "NUMEXPR_NUM_THREADS", "BLIS_NUM_THREADS",
+          "VECLIB_MAXIMUM_THREADS"):
+    os.environ.setdefault(_v, "1")
+
+import numpy as np
+
+from core.cell_tests import build_cell, build_torus_cell, run_flow_test
+from core.flow_probe import write_csv as write_flow_csv, write_quad_npz
+from core.disk_io import load_mu_table, mu_key
+from core.project_constants import MU_JSON, EC, MAX_DEG, PROD_SWEEPS
+from core.graph_builder import calibrate_missing
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Output paths
+# ═══════════════════════════════════════════════════════════════════
+# Per-cell flow CSVs go into a subdirectory so the project root stays
+# uncluttered as the dataset grows. Existing top-level flow_*.csv files
+# are still readable by the dashboard (it globs both locations); use
+# main.py slot 5 (migrate-csvs) to move legacy files into here.
+FLOW_DIR = "flow"
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Shape classifier
+# ═══════════════════════════════════════════════════════════════════
+def classify_shape(d_s_mean, in_window):
+    """Heuristic shape tag for a d_s(t) curve.
+
+    Operates on the in-window region only. Counts local maxima/minima
+    after a small smoothing pass to suppress per-point noise. Returns
+    one of:
+       'flat'              — d_s varies by less than 0.5 across the window
+       'monotone_rising'   — d_s increases >= 0.8 with no significant dip
+       'monotone_falling'  — d_s decreases >= 0.8 with no significant rise
+       'single_peak'       — one local maximum, descending after
+       'double_peak'       — two local maxima
+       'bumpy'             — three or more local extrema
+       'undetermined'      — too few in-window points
+    """
+    valid = in_window & np.isfinite(d_s_mean)
+    if valid.sum() < 8:
+        return "undetermined"
+    y = d_s_mean[valid].copy()
+    # Smooth by a 3-point box average to suppress one-point wiggles.
+    if len(y) >= 5:
+        y_smooth = np.convolve(y, np.ones(3) / 3, mode="valid")
+    else:
+        y_smooth = y
+    # Find local maxima/minima (interior points only).
+    n = len(y_smooth)
+    peaks_idx = []
+    troughs_idx = []
+    for i in range(1, n - 1):
+        if y_smooth[i] > y_smooth[i - 1] and y_smooth[i] > y_smooth[i + 1]:
+            peaks_idx.append(i)
+        if y_smooth[i] < y_smooth[i - 1] and y_smooth[i] < y_smooth[i + 1]:
+            troughs_idx.append(i)
+
+    span = float(y_smooth.max() - y_smooth.min())
+    std_y = float(np.std(y))
+    # Flat requires BOTH small total range AND small std — otherwise
+    # a smoothly meandering curve passes the span check but is not
+    # at one dimension. Keep this in sync with ds4_search/static_dashboard.py.
+    if span < 0.5 and std_y < 0.4:
+        return "flat"
+
+    # Ignore extremely shallow extrema (< 0.15 amplitude relative to
+    # nearest neighbour). These are noise-level wiggles, not features.
+    def amplitude(idx):
+        # Compare to closest left and right neighbour values
+        left = max(idx - 1, 0)
+        right = min(idx + 1, n - 1)
+        return min(abs(y_smooth[idx] - y_smooth[left]),
+                   abs(y_smooth[idx] - y_smooth[right]))
+    peaks = [i for i in peaks_idx if amplitude(i) >= 0.15]
+    troughs = [i for i in troughs_idx if amplitude(i) >= 0.15]
+
+    n_peaks = len(peaks)
+    n_troughs = len(troughs)
+    n_extrema = n_peaks + n_troughs
+
+    # Endpoint-based classification: did the curve net rise or fall?
+    net = float(y_smooth[-1] - y_smooth[0])
+
+    if n_peaks == 0 and n_troughs == 0:
+        if net >= 0.8:
+            return "monotone_rising"
+        elif net <= -0.8:
+            return "monotone_falling"
+        elif std_y < 0.7:
+            return "flat"
+        else:
+            # Featureless but non-trivial variation — meandering
+            # without strong trend. Distinct from "flat" so the
+            # dashboard's leaderboard isn't mislead by a tag that
+            # implies a single-dimension regime when there isn't one.
+            return "wobble"
+    if n_peaks == 1 and n_troughs == 0:
+        return "single_peak"
+    if n_peaks == 1 and n_troughs == 1:
+        return "single_peak"
+    if n_peaks == 2:
+        return "double_peak"
+    return "bumpy"
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Status JSON: live progress / ETA / RSS for the dashboard to poll
+# ═══════════════════════════════════════════════════════════════════
+def get_rss_mb():
+    """Current RSS in MB on Linux. Returns None elsewhere."""
+    try:
+        with open('/proc/self/status') as f:
+            for line in f:
+                if line.startswith('VmRSS:'):
+                    return int(line.split()[1]) / 1024.0  # KB → MB
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def get_rss_peak_mb():
+    """Peak RSS in MB. ru_maxrss is in KB on Linux, bytes on macOS."""
+    try:
+        kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        # Heuristic: if value is huge, assume macOS (bytes)
+        return kb / (1024.0 * 1024.0) if kb > 1e8 else kb / 1024.0
+    except Exception:
+        return None
+
+
+# Cached at module load — script hash + start time. The hash flips
+# on os.execv restart (because the new process re-imports this
+# module from updated source), giving the dashboard a visible
+# version-change signal.
+_SWEEP_BUILD_INFO = {
+    "script_path": os.path.basename(__file__),
+    "script_hash": (lambda: hashlib.sha256(
+        open(__file__, "rb").read()).hexdigest()[:8])()
+        if os.path.exists(__file__) else "unknown",
+    "started_at_iso": time.strftime("%Y-%m-%d %H:%M:%S"),
+}
+
+
+def _work_N(w):
+    """Node count N of a work-item (cell or torus)."""
+    return w[4] if w[0] == "cell" else w[2]
+
+
+def estimate_eta_seconds(done_samples, remaining_Ns, n_workers):
+    """Wall-clock ETA (seconds) for the remaining work.
+
+    The naive "remaining ÷ average rate" estimate is badly wrong here:
+    cells are run smallest-N first, and per-cell cost grows steeply with
+    N (roughly a power law, since the SLQ/RW work scales super-linearly).
+    So once the small cells are done, the average rate is far too
+    optimistic for the big-N cells still to come.
+
+    Instead we fit the observed cost trend  wall ≈ a · N^b  on a log-log
+    least-squares line through the completed (N, wall) samples, predict
+    each remaining cell's wall from its own N, sum that, and divide by the
+    worker count (work runs in parallel). The result is also floored at the
+    single longest predicted item — you can't finish faster than the slowest
+    remaining cell on one core.
+
+    Returns None until there are enough samples (≥3 over ≥2 distinct N) to
+    fit a trend; the caller then just omits the ETA.
+    """
+    if not remaining_Ns:
+        return 0
+    pts = [(float(n), float(w)) for (n, w) in done_samples
+           if n and w and w > 0]
+    distinct_N = {n for n, _ in pts}
+    if len(pts) >= 3 and len(distinct_N) >= 2:
+        xs = np.log(np.array([n for n, _ in pts]))
+        ys = np.log(np.array([w for _, w in pts]))
+        b, log_a = np.polyfit(xs, ys, 1)      # ys ≈ b·xs + log_a
+        a = float(np.exp(log_a))
+
+        def predict(n):
+            return a * (n ** b)
+    elif pts:
+        avg = sum(w for _, w in pts) / len(pts)
+
+        def predict(n):
+            return avg
+    else:
+        return None
+    preds = [predict(n) for n in remaining_Ns]
+    total_cpu_s = sum(preds)
+    wall = total_cpu_s / max(1, n_workers)
+    return int(max(wall, max(preds, default=0)))
+
+
+class _ShapeRefresher:
+    """Runs the shape analysis (CSV + histogram + heatmaps) OFF the worker-
+    dispatch thread, so regenerating plots never stalls the sweep.
+
+    The dispatch loop calls .request() whenever new cells have landed; that
+    is non-blocking. A single daemon thread does the actual (heavy, growing)
+    re-scan-and-render, at most once per `min_interval_s` seconds, and
+    coalesces bursts of requests into one run. If a request arrives while a
+    render is in flight, exactly one more render is scheduled afterwards
+    (so the final state is never missed) rather than queueing many.
+
+    Why time-throttled instead of every-N-cells: the refresh re-reads every
+    flow_*.csv on disk, so its cost grows with the sweep. A fixed cell count
+    made the stalls lengthen over time; a wall-clock floor keeps plot churn
+    bounded no matter how large the run or how fast cells complete.
+    """
+
+    def __init__(self, min_interval_s=10.0):
+        self.min_interval_s = float(min_interval_s)
+        self._lock = threading.Lock()
+        self._wake = threading.Event()
+        self._pending = False
+        self._stop = False
+        self._last_run = 0.0
+        self._thread = threading.Thread(target=self._loop, daemon=True,
+                                        name="shape-refresh")
+        self._thread.start()
+
+    def request(self):
+        """Non-blocking: mark that a refresh is wanted and wake the worker."""
+        with self._lock:
+            self._pending = True
+        self._wake.set()
+
+    def _loop(self):
+        while True:
+            self._wake.wait()
+            if self._stop and not self._pending:
+                return
+            # Honour the minimum interval between renders, but stay
+            # responsive to stop(): wait on the event in short slices so a
+            # shutdown during the throttle window returns promptly instead
+            # of blocking for the full interval.
+            deadline = self._last_run + self.min_interval_s
+            while time.time() < deadline:
+                if self._stop and not self._pending:
+                    return
+                time.sleep(min(0.1, max(0.0, deadline - time.time())))
+            with self._lock:
+                if not self._pending:
+                    self._wake.clear()
+                    if self._stop:
+                        return
+                    continue
+                self._pending = False
+                self._wake.clear()
+            _refresh_shape_analysis()
+            self._last_run = time.time()
+
+    def stop(self, final_refresh=False):
+        """Stop the background thread. The caller is responsible for any
+        final synchronous refresh (finalize does one), so by default we do
+        NOT render here — we just unblock and join."""
+        self._stop = True
+        self._wake.set()
+        self._thread.join(timeout=2.0)
+
+
+def _finalize_sweep(args, classifications, cells, seed_list, t_total,
+                    n_done, n_failed, phase):
+    """Write the post-sweep artefacts: classifications CSV, a final shape
+    refresh (so the plots reflect every finished cell), and a terminal
+    status JSON. Safe to call on the normal completion path AND from the
+    Ctrl-C handler, so an interrupted run still leaves up-to-date plots
+    and a CSV for whatever cells actually finished — not just a bare
+    flow/ dir.
+    """
+    cls_path = f"{args.out_prefix}_classifications.csv"
+    with open(cls_path, "w") as f:
+        f.write("k,T,lb,N,seed,shape,ds_min,ds_max\n")
+        for row in classifications:
+            f.write(",".join(str(x) for x in row) + "\n")
+    print(f"\n  → {cls_path}", flush=True)
+    print(f"  flow data: up to {len(cells) * len(seed_list)} flow_*.csv "
+          f"file(s) ({len(cells)} cells × {len(seed_list)} seed(s)) in "
+          f"{FLOW_DIR}/", flush=True)
+    print(f"  total wall time: {time.time()-t_total:.0f}s", flush=True)
+
+    # Final shape refresh so the last batch of cells is reflected in the
+    # summary + plots, however the sweep ended.
+    _refresh_shape_analysis()
+
+    write_status_json(args.status_json, build_status(
+        phase=phase,
+        started_at=t_total,
+        n_total=len(cells) * len(seed_list), n_done=n_done,
+        n_failed=n_failed,
+    ))
+
+
+def _refresh_shape_analysis():
+    """Re-run the shape analysis on the data gathered so far, refreshing
+    shape_summary.csv and the histogram/heatmap PNGs in the output dir.
+
+    The sweep runs with the output directory as its cwd, so the default
+    `--dir .` finds flow/ and writes the artefacts alongside it. Best-effort:
+    a plotting hiccup must never take down the sweep, so everything is
+    wrapped and failures are logged and swallowed.
+    """
+    try:
+        import shape_analysis
+        shape_analysis.main(["--dir", "."])
+        print("  \u21bb shape analysis refreshed "
+              "(shape_summary.csv + histogram + heatmap)", flush=True)
+    except Exception as e:
+        print(f"  [shape] refresh skipped: {type(e).__name__}: {e}",
+              flush=True)
+    # Dual-mode (flat-4D vs flowing-4D) analysis on the same data. Additive
+    # and best-effort: a hiccup here must never take down the sweep.
+    try:
+        import flow_modes
+        flow_modes.main(["--dir", "."])
+        print("  \u21bb flow-mode analysis refreshed "
+              "(flow_modes.csv + plane + maps)", flush=True)
+    except Exception as e:
+        print(f"  [flow_modes] refresh skipped: {type(e).__name__}: {e}",
+              flush=True)
+
+
+def build_status(phase, started_at, n_total, n_done, n_failed,
+                 last_cell=None, next_cell=None,
+                 in_flight=None,
+                 calibration=None,
+                 eta_sec_override=None):
+    """Assemble a status dict for write_status_json.
+
+    All values are JSON-safe (no numpy scalars, no NaN/Inf passed
+    through unprotected). Dashboard polls this and re-renders a
+    tiny status banner.
+
+    `in_flight` is a list of dicts, one per work-item currently
+    executing in the worker pool. Each is either a cell (has k, T,
+    lb, N) or a torus reference (has d, L, N). The dashboard renders
+    these so the user can see all parallel work, not just one
+    "next" cell. `next_cell` is kept for backward compatibility:
+    we set it to the first in_flight item if any.
+    """
+    now = time.time()
+    elapsed = now - started_at if started_at else 0
+    rate = (n_done / elapsed * 60.0) if (elapsed > 0 and n_done > 0) else None
+    remaining = max(0, n_total - n_done - n_failed)
+    eta = (remaining / (rate / 60.0)) if (rate and rate > 0) else None
+
+    # Back-compat: if caller passed in_flight but not next_cell,
+    # synthesise a next_cell from the first cell-kind in_flight item
+    # so older dashboards still render something sensible.
+    if next_cell is None and in_flight:
+        for item in in_flight:
+            if item.get("kind") == "cell":
+                next_cell = (item["k"], item["T"], item["lb"], item["N"])
+                break
+
+    # Prefer the cost-extrapolated ETA when the caller supplies it (it
+    # accounts for the steep cost-vs-N growth); fall back to the naive
+    # remaining/rate estimate only before enough samples exist to fit.
+    eta_final = eta_sec_override if eta_sec_override is not None else eta
+
+    out = {
+        "phase": phase,                       # running | done | calibrating
+        "started_at": started_at,
+        "now": now,
+        "elapsed_sec": round(elapsed, 1),
+        "rss_mb": round(get_rss_mb(), 1) if get_rss_mb() else None,
+        "rss_peak_mb": round(get_rss_peak_mb(), 1) if get_rss_peak_mb() else None,
+        "n_total": n_total,
+        "n_done": n_done,
+        "n_failed": n_failed,
+        "n_remaining": remaining,
+        "rate_per_min": round(rate, 2) if rate else None,
+        "eta_sec": round(eta_final) if eta_final else None,
+        "last_cell": last_cell,
+        "next_cell": (
+            {"k": next_cell[0], "T": next_cell[1],
+             "lb": next_cell[2], "N": next_cell[3]}
+            if next_cell else None),
+        "in_flight": in_flight or [],
+        "build": _SWEEP_BUILD_INFO,
+    }
+    if calibration is not None:
+        out["calibration"] = calibration
+    return out
+
+
+def write_status_json(path, status):
+    """Atomic write: dump to .tmp then rename. Avoids partial-read
+    races where the dashboard polls mid-write."""
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w") as f:
+            json.dump(status, f, indent=2, default=str)
+        os.replace(tmp, path)   # atomic on POSIX
+    except OSError:
+        # Don't crash the sweep over a status write failure.
+        pass
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Hot reload: process-level (os.execv) when source files change
+# ═══════════════════════════════════════════════════════════════════
+def _watched_files():
+    """Return the list of .py files we'll monitor for changes.
+
+    Watches every .py file under the src/ tree (core/, ds4_search/,
+    metrics/, ...). The sweep imports several of these (core.cell_tests,
+    core.flow_probe, core.graph_builder, etc.) and any of them changing should
+    trigger a restart.
+
+    Hot-reload is *not* needed for changes to data files (mu_table,
+    flow_*.csv) — those are re-read on every cell anyway.
+    """
+    src_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    files = sorted(glob.glob(os.path.join(src_root, "**", "*.py"),
+                             recursive=True))
+    # Always include this file even if naming convention changes
+    me = os.path.abspath(__file__)
+    if me not in files:
+        files.append(me)
+    return files
+
+
+def _file_hash(path):
+    """SHA-256 of file contents. None if file is unreadable.
+
+    SHA-256 is overkill for change detection but it's stdlib, fast
+    enough for a few-hundred-KB Python source, and the False-positive
+    rate is zero. We don't truncate — full hex digests sit in a small
+    dict for the sweep's lifetime.
+    """
+    try:
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except OSError:
+        return None
+
+
+def snapshot_source_hashes():
+    """{path: hash} for all watched files at this moment.
+
+    Captured once at sweep startup (after imports complete) and again
+    between each cell. Comparison drives the restart decision.
+    """
+    return {p: _file_hash(p) for p in _watched_files()}
+
+
+def detect_changes(baseline, current):
+    """Return list of paths whose hash differs between baseline and
+    current snapshots. Empty list = no restart needed.
+    """
+    changed = []
+    for p, h in current.items():
+        if baseline.get(p) != h:
+            changed.append(p)
+    # Also catch deletions — file in baseline but missing now
+    for p in baseline:
+        if p not in current:
+            changed.append(p)
+    return changed
+
+
+def restart_self(reason, status_json_path, status_payload):
+    """Replace the current process with a fresh invocation of itself
+    using the same argv. The cached-cell skip logic in main() means
+    the restart picks up exactly where this run left off without
+    having to hand off any state.
+
+    Writes a final status JSON announcing the restart so the
+    dashboard's banner can show it briefly before the new process
+    overwrites the file with its own status.
+
+    os.execv is POSIX-only. On Windows you'd need subprocess+exit.
+    All file descriptors are inherited; stdout/stderr stay attached
+    to the same pipe (or log file, in the dashboard-spawn case).
+    """
+    status_payload = dict(status_payload)
+    status_payload["phase"] = "restarting"
+    status_payload["restart_reason"] = reason
+    write_status_json(status_json_path, status_payload)
+    print(f"\n  ⟳ source change detected: {reason}", flush=True)
+    print(f"    restarting sweep via os.execv (cached cells will skip)",
+          flush=True)
+    # Brief pause so the status JSON shows "restarting" for at least
+    # one dashboard poll cycle — otherwise it's overwritten so fast
+    # the user never sees the message.
+    time.sleep(1.0)
+    os.execv(sys.executable, [sys.executable, *sys.argv])
+    # ↑ Does not return on success. If it does return, exec failed.
+    print(f"    [FATAL] os.execv failed; exiting with code 1",
+          flush=True)
+    sys.exit(1)
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Cell I/O
+# ═══════════════════════════════════════════════════════════════════
+def cell_tag(k, T, lb, N, seed):
+    return f"k{k}_T{T}_lb{lb}_N{N}_s{seed}"
+
+
+def torus_tag(d, L, seed):
+    return f"torus{d}d_L{L}_s{seed}"
+
+
+def torus_L_for_N(N: int, d: int) -> int:
+    return max(6, int(round(N ** (1.0 / d))))
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Parallel work-item dispatch
+# ═══════════════════════════════════════════════════════════════════
+# A work-item is a tuple identifying one unit of expensive work that
+# can run independently in a worker process. Seed is part of the
+# identity — each (cell, seed) pair is its own independent SLQ run with
+# its own flow_*.csv, so multi-seed sweeps parallelise and resume
+# per-seed for free:
+#     ("torus", d, N, seed)         — torus reference at (d, L=L(N,d))
+#     ("cell",  k, T, lb, N, seed)  — sweep cell
+#
+# Both ultimately call run_flow_test() which is single-threaded SLQ.
+# Wrapping each in a worker process and dispatching all of them to a
+# ProcessPoolExecutor lets the box's many cores run many items in
+# parallel — the original loops were serial, so a 16-core machine
+# was idling 15 cores while one SLQ ground through L=45.
+def _work_seed(w):
+    """Seed of a work-item (always the last tuple element)."""
+    return w[-1]
+
+
+def _work_tag(w):
+    """Short identifier for log prefixing (includes seed)."""
+    if w[0] == "torus":
+        _, d, N, seed = w
+        L = torus_L_for_N(N, d)
+        return f"torus{d}d_L{L}_N{N}_s{seed}"
+    _, k, T, lb, N, seed = w
+    return f"k{k}_T{T}_lb{lb}_N{N}_s{seed}"
+
+
+def _work_cost_estimate(w):
+    """Rough wall-time estimate (seconds) for ordering. SLQ scales
+    roughly linearly in N at large N, sub-linear at small N. We
+    submit smallest-first so the dashboard fills with results
+    quickly instead of staring at a single huge L=45 cell for
+    minutes before anything appears.
+    """
+    if w[0] == "torus":
+        _, d, N, seed = w
+        L = torus_L_for_N(N, d)
+        n_eff = L ** d
+        return 1.0 + n_eff / 50000.0
+    _, k, T, lb, N, seed = w
+    return 1.0 + N / 50000.0
+
+
+def _csv_path_for(w):
+    """Where this work-item's output CSV will live. Used both for
+    cached-skip detection and for writing the result. The seed is taken
+    from the work-item itself (its last element).
+    """
+    if w[0] == "torus":
+        _, d, N, seed = w
+        L = torus_L_for_N(N, d)
+        return os.path.join(FLOW_DIR, f"flow_{torus_tag(d, L, seed)}.csv")
+    _, k, T, lb, N, seed = w
+    return os.path.join(FLOW_DIR, f"flow_{cell_tag(k, T, lb, N, seed)}.csv")
+
+
+def _work_in_flight_dict(w):
+    """JSON-safe in_flight entry for the status JSON. Dashboard
+    renders these as a list of currently-running cells.
+    """
+    if w[0] == "torus":
+        _, d, N, seed = w
+        L = torus_L_for_N(N, d)
+        return {"kind": "torus", "d": d, "L": L, "N": N, "seed": seed}
+    _, k, T, lb, N, seed = w
+    return {"kind": "cell", "k": k, "T": T, "lb": lb, "N": N, "seed": seed}
+
+
+def _worker_init():
+    """ProcessPoolExecutor initializer, run once at the top of every
+    worker. On Linux, ask the kernel to send this worker SIGKILL the
+    instant its parent (the __sweep__ process) dies — for ANY reason,
+    including SIGKILL, a segfault, or the OOM killer, none of which give
+    the parent a chance to tear the pool down itself. This is the hard
+    backstop against the worker-orphaning that otherwise leaves a "ton of
+    lingering python processes" when the sweep goes away unexpectedly.
+
+    Workers only write flow CSVs atomically (see flow_probe.write_csv), so
+    a hard SIGKILL here can't corrupt a cell — it leaves at most a .tmp.
+
+    No-op on macOS/Windows (no PR_SET_PDEATHSIG); the parent-side
+    process-group kill in live_app covers teardown there.
+    """
+    if not sys.platform.startswith("linux"):
+        return
+    try:
+        import ctypes
+        import signal as _signal
+        PR_SET_PDEATHSIG = 1
+        libc = ctypes.CDLL("libc.so.6", use_errno=True)
+        libc.prctl(PR_SET_PDEATHSIG, _signal.SIGKILL, 0, 0, 0)
+        # Race guard: if the parent already died between fork and this
+        # prctl call, PDEATHSIG won't fire (it only triggers on a *future*
+        # parent death). Detect the orphan-now case and exit immediately.
+        if os.getppid() == 1:
+            os._exit(1)
+    except Exception:
+        # A missing/odd libc must not stop the worker from doing its job;
+        # the parent-side killpg remains the primary teardown path.
+        pass
+
+
+def _sidecar_path(csv_path, new_prefix, new_ext):
+    """flow/flow_<tag>.csv -> flow/<new_prefix>_<tag>.<new_ext> (atomic-write
+    targets live in the same dir as the flow CSV)."""
+    base = os.path.basename(csv_path).replace("flow_", new_prefix + "_", 1)
+    base = base.rsplit(".", 1)[0] + "." + new_ext
+    return os.path.join(os.path.dirname(csv_path), base)
+
+
+def _write_cell_meta(work_item, cell, res, params, mu_table, csv_path, wall_s):
+    """Tier-1 sidecar: agnostic graph properties + full provenance +
+    equilibration trace, written next to the flow CSV so the downstream
+    LCC>=90% gate, the energy/Hamiltonian audit, and the equilibration
+    check all have something on disk. These are raw measurements of the
+    grown graph (not analysis), so persisting them keeps capture
+    analysis-agnostic. Atomic, like the flow CSV: a killed worker leaves
+    at most a stray .tmp.
+    """
+    s = cell.stats
+    flow = res.flow if res is not None else {}
+    tg = flow.get("t_grid")
+    meta = {
+        "schema": 2,
+        "code_hash": _SWEEP_BUILD_INFO.get("script_hash"),
+        "ec": EC, "max_degree": MAX_DEG, "prod_sweeps": PROD_SWEEPS,
+        "n_probes": params.get("n_probes"),
+        "lanczos_m": params.get("lanczos_m"),
+        "half_window": params.get("half_window"),
+        "N_eff": int(cell.N_eff),
+        "lam_max_bound": float(cell.lam_max_bound),
+        "wall_s": round(float(wall_s), 2),
+    }
+    if tg is not None and len(tg):
+        meta.update(t_lo=float(tg[0]), t_hi=float(tg[-1]), n_t=int(len(tg)))
+    if work_item[0] == "torus":
+        _, d, N, seed = work_item
+        meta.update(kind="torus", d=d, N=N, seed=seed, mu=None)
+    else:
+        _, k, T, lb, N, seed = work_item
+        meta.update(kind="cell", k=k, T=T, lb=lb, N=N, seed=seed,
+                    mu=float(mu_table.get(mu_key(k, T, lb), float("nan"))),
+                    therm_sweeps=int(cell.sweeps))
+    if s is not None:
+        meta.update(
+            lcc_pct=float(s.lcc_pct), transitivity=float(s.transitivity),
+            tri_per_edge=float(s.tri_per_edge),
+            assortativity=float(s.assortativity),
+            k_avg=float(s.k_avg), k_min=int(s.k_min), k_max=int(s.k_max),
+            edges=int(s.edges), triangles=int(s.triangles),
+            k_top=int(cell.peak_deg))
+    else:
+        # torus: regular lattice, connected, triangle-free
+        meta.update(lcc_pct=100.0, transitivity=0.0, k_top=int(cell.peak_deg))
+    dh = getattr(cell, "deg_hist", None)
+    if dh is not None:
+        meta["degree_hist"] = [int(x) for x in dh]
+    sdsq = getattr(cell, "sum_deg_sq", 0)
+    if sdsq:
+        meta["sum_deg_sq"] = int(sdsq)
+        if meta.get("mu") is not None and "edges" in meta:
+            meta["energy_H"] = float(EC * meta["edges"] + meta["mu"] * sdsq)
+    tr = getattr(cell, "therm_trace", None)
+    if tr:
+        meta["therm_trace"] = {
+            "cols": ["sweep", "k_avg", "sum_deg_sq"],
+            "rows": [[int(a), float(b), float(c)] for (a, b, c) in tr],
+        }
+    meta_path = _sidecar_path(csv_path, "meta", "json")
+    tmp = f"{meta_path}.tmp.{os.getpid()}"
+    try:
+        with open(tmp, "w") as fh:
+            json.dump(meta, fh)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, meta_path)
+    finally:
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+
+def _run_one(work_item, params, mu_table):
+    """Worker entry point: run one torus ref or sweep cell to
+    completion, write its flow CSV, return a small result dict.
+
+    Lives at module top-level so ProcessPoolExecutor can pickle it.
+    Returns no big arrays — only the parameter tuple, success flag,
+    wall time, and (for cells) shape/ds_lo/ds_hi. The flow CSV is
+    persisted to disk; the dashboard reads it from there.
+
+    Parent has already pinned BLAS to 1 thread per worker via env
+    vars set at module import time, so we don't oversubscribe.
+    """
+    t0 = time.time()
+    tag = _work_tag(work_item)
+    seed = _work_seed(work_item)
+    csv_path = _csv_path_for(work_item)
+    print(f"[{tag}] starting", flush=True)
+    try:
+        if work_item[0] == "torus":
+            _, d, N, _seed = work_item
+            L = torus_L_for_N(N, d)
+            cell = build_torus_cell(d, L, seed)
+        else:
+            _, k, T, lb, N, _seed = work_item
+            cell = build_cell(k, T, lb, N, seed, mu_table)
+
+        res = run_flow_test(cell,
+                            n_probes=params["n_probes"],
+                            lanczos_m=params["lanczos_m"],
+                            half_window=params["half_window"])
+        write_flow_csv(res, csv_path)
+        # Tier-2: persist the SLQ Ritz quadrature so d_s(t) can be
+        # re-extracted (re-grid / deeper-UV / re-window) without re-running
+        # SLQ. Tier-1: enriched topology + provenance + equilibration trace.
+        # Both best-effort — a sidecar hiccup must not fail a finished cell.
+        try:
+            write_quad_npz(res, _sidecar_path(csv_path, "quad", "npz"))
+        except Exception as _qe:
+            print(f"[{tag}] quad sidecar skipped: "
+                  f"{type(_qe).__name__}: {_qe}", flush=True)
+        try:
+            _write_cell_meta(work_item, cell, res, params, mu_table,
+                             csv_path, wall_s=time.time() - t0)
+        except Exception as _me:
+            print(f"[{tag}] meta sidecar skipped: "
+                  f"{type(_me).__name__}: {_me}", flush=True)
+
+        if work_item[0] == "cell":
+            shape = classify_shape(res.flow["d_s_mean"],
+                                   res.flow["in_window"])
+            in_w = res.flow["in_window"]
+            d_in = res.flow["d_s_mean"][in_w]
+            d_in = d_in[np.isfinite(d_in)]
+            ds_lo = float(d_in.min()) if len(d_in) else math.nan
+            ds_hi = float(d_in.max()) if len(d_in) else math.nan
+        else:
+            shape = None
+            ds_lo = ds_hi = None
+
+        wall = time.time() - t0
+        msg = f"[{tag}] done in {wall:.1f}s"
+        if shape is not None:
+            msg += f", shape={shape}, d_s ∈ [{ds_lo:.2f}, {ds_hi:.2f}]"
+        print(msg, flush=True)
+
+        return {"work_item": work_item, "ok": True, "wall_s": wall,
+                "shape": shape, "ds_lo": ds_lo, "ds_hi": ds_hi}
+    except Exception as e:
+        wall = time.time() - t0
+        print(f"[{tag}] FAILED in {wall:.1f}s: "
+              f"{type(e).__name__}: {e}", flush=True)
+        return {"work_item": work_item, "ok": False, "wall_s": wall,
+                "error": f"{type(e).__name__}: {e}"}
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Main
+# ═══════════════════════════════════════════════════════════════════
+def parse_floats(s):
+    return [float(x) for x in s.split(",") if x.strip()]
+
+
+def parse_ints(s):
+    return [int(x) for x in s.split(",") if x.strip()]
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--k", type=str, required=True,
+                    help="Comma-separated k values (e.g. '6,8,9')")
+    ap.add_argument("--T", type=str, required=True,
+                    help="Temperature(s), comma-separated. T=0 is a useful "
+                         "ground-state anchor (no thermal noise); T=0.005 "
+                         "is the typical low-T basin. Example: '0,0.005' to "
+                         "sweep both as separate panels.")
+    ap.add_argument("--lb", type=str, default=None,
+                    help="Comma-separated lb values "
+                         "(e.g. '0.93,0.94,0.95,0.99')")
+    ap.add_argument("--lb-file", type=str, default=None,
+                    help="Path to file with one lb value per line "
+                         "(alternative to --lb)")
+    ap.add_argument("--N", type=str, required=True,
+                    help="Comma-separated N values (e.g. '16000,64000,256000')")
+    ap.add_argument("--seed", type=int, default=42,
+                    help="Single base seed (back-compat). Ignored if "
+                         "--seeds is given.")
+    ap.add_argument("--seeds", type=str, default=None,
+                    help="Comma-separated seeds to run per cell "
+                         "(e.g. '42,43,44,45,46'). Each seed produces its "
+                         "own flow_*.csv. Overrides --seed.")
+    ap.add_argument("--shape-refresh-secs", type=float, default=10.0,
+                    help="Minimum seconds between background regenerations "
+                         "of the heatmaps/histogram while sweeping. Plots "
+                         "render off the dispatch thread, so this only "
+                         "bounds plot freshness, never sweep speed.")
+    ap.add_argument("--n-probes", type=int, default=60)
+    ap.add_argument("--lanczos-m", type=int, default=300)
+    ap.add_argument("--half-window", type=int, default=10)
+    ap.add_argument("--no-torus", action="store_true",
+                    help="Skip torus reference per panel")
+    ap.add_argument("--force", action="store_true",
+                    help="Re-run all cells even if their flow_*.csv "
+                         "already exists. Default is to skip cached "
+                         "cells, which makes the sweep idempotent so "
+                         "the dashboard can spawn it safely.")
+    ap.add_argument("--watch-reload", action="store_true",
+                    help="Hot-reload mode: between cells, check for "
+                         "changes to any source file under src/. If "
+                         "anything changed, restart the sweep via "
+                         "os.execv (same PID, fresh interpreter). "
+                         "Cached-cell skipping means the restart "
+                         "continues from where we stopped without "
+                         "re-doing work. Useful for live tweaking of "
+                         "shape thresholds, status JSON contents, or "
+                         "log formats during a long sweep. Note that "
+                         "the currently-running cell completes with "
+                         "the OLD code; reload happens at the next "
+                         "cell boundary.")
+    ap.add_argument("--torus-d", type=str, default="4",
+                    help="Torus dimension(s) for reference, comma-"
+                         "separated (e.g. '2,3,4,5'). Each becomes a "
+                         "separate dashed reference curve in the "
+                         "dashboard, anchoring basin curves against "
+                         "known-flat geometries. Torus refs run FIRST "
+                         "so they appear in the dashboard before any "
+                         "basin cell completes.")
+    ap.add_argument("--out-prefix", type=str, default="lb_sweep")
+    ap.add_argument("--workers", type=int, default=0,
+                    help="Number of parallel worker processes for the "
+                         "torus + cell sweep. Default 0 means use all "
+                         "cores granted by sched_getaffinity (e.g. 16 "
+                         "on a 16-core box, less under cgroup/taskset). "
+                         "Each worker runs one SLQ at a time; BLAS is "
+                         "pinned to 1 thread per worker via env vars "
+                         "set before numpy import. Reduce this if you "
+                         "OOM on big-N items running concurrently.")
+    ap.add_argument("--status-json", type=str,
+                    default="lb_sweep_status.json",
+                    help="Path for live sweep status JSON, written after "
+                         "each cell completes. The dashboard polls this "
+                         "file to show progress / ETA / RSS while the "
+                         "sweep runs. Atomic writes via rename.")
+    ap.add_argument("--show-plan", action="store_true",
+                    help="Print the cell list + estimated runtime, then exit")
+    args = ap.parse_args(argv)
+
+    k_vals = parse_ints(args.k)
+    T_vals = parse_floats(args.T)
+    N_vals = parse_ints(args.N)
+    # Seeds to run per cell. --seeds (a list) is the normal path now;
+    # --seed (single) is kept so older invocations still work. Each seed
+    # is an independent unit of work with its own flow_*.csv.
+    if args.seeds:
+        seed_list = parse_ints(args.seeds)
+    else:
+        seed_list = [args.seed]
+    if not seed_list:
+        raise SystemExit("no seeds to run (empty --seeds).")
+    if args.lb_file:
+        with open(args.lb_file) as f:
+            lb_vals = [float(line.strip()) for line in f
+                       if line.strip() and not line.strip().startswith("#")]
+    elif args.lb:
+        lb_vals = parse_floats(args.lb)
+    else:
+        raise SystemExit("must give --lb or --lb-file")
+
+    # Cell grid: (k, T, lb, N). Iteration order is cheap-first — N is
+    # the outermost axis so we exhaust every (T, k, lb) combo at the
+    # current N before paying the next ×4 memory/time jump. Within a
+    # fixed N, lb cycles fastest (innermost), then k, then T. The
+    # progression "lowest N, lowest k, lowest lb → crank lb high → crank
+    # k high → bump N to next ×4" matches what the operator sees in the
+    # heartbeat: a full (k, lb) plane fills in for each N rung before
+    # the next one starts.
+    cells = [(k, T, lb, N)
+             for N in N_vals
+             for T in T_vals
+             for k in k_vals
+             for lb in lb_vals]
+    print(f"  plan: {len(k_vals)} k × {len(T_vals)} T × "
+          f"{len(N_vals)} N × {len(lb_vals)} lb = {len(cells)} basin cells"
+          f" × {len(seed_list)} seed(s) = "
+          f"{len(cells) * len(seed_list)} cell-runs",
+          flush=True)
+    if not args.no_torus:
+        torus_dims_preview = [int(x) for x in str(args.torus_d).split(",")
+                              if x.strip()]
+        n_torus = len(torus_dims_preview) * len(N_vals)
+        print(f"        + {n_torus} torus reference cells "
+              f"({len(torus_dims_preview)} dim(s) × {len(N_vals)} N)",
+              flush=True)
+
+    # Estimate runtime: SLQ at ~5 min for N=64k, scales roughly linearly
+    # in N at large N, sub-linear at small N. Rough bound:
+    est_min = sum(0.3 + N / 50000 for (_, _, _, N) in cells)
+    if not args.no_torus:
+        torus_dims_preview = [int(x) for x in str(args.torus_d).split(",")
+                              if x.strip()]
+        for d in torus_dims_preview:
+            est_min += sum(0.3 + N / 50000 for N in N_vals)
+    print(f"        estimated wall time ~{est_min:.0f} min "
+          f"(very rough; depends on hardware)",
+          flush=True)
+    if args.show_plan:
+        for c in cells:
+            print(f"          {c}")
+        return
+
+    # Load μ table
+    mu_table = load_mu_table()
+    if not mu_table:
+        print(f"  {MU_JSON} not found or empty — will calibrate from scratch.",
+              flush=True)
+        mu_table = {}
+
+    # Identify (k, T, lb) tuples that need μ calibration
+    needed_keys = {(k, T, lb) for (k, T, lb, _) in cells}
+    missing = sorted({(k, T, lb) for (k, T, lb) in needed_keys
+                      if mu_key(k, T, lb) not in mu_table})
+    if missing:
+        print(f"\n  μ-calibration missing for {len(missing)} (k, T, lb) "
+              f"tuple(s) — auto-calibrating before sweep starts:",
+              flush=True)
+        for c in missing[:10]:
+            print(f"      {c}", flush=True)
+        if len(missing) > 10:
+            print(f"      ... and {len(missing)-10} more", flush=True)
+        # Surface a 'calibrating' phase so the live page shows it instead of
+        # sitting on "Initialising…" for the whole (potentially long)
+        # calibration pass that runs before the sweep proper.
+        write_status_json(args.status_json, build_status(
+            phase="calibrating",
+            started_at=time.time(),
+            n_total=len(cells) * len(seed_list), n_done=0, n_failed=0,
+            calibration={"n_targets": len(missing)},
+        ))
+        # Do it. calibrate_missing parallelises by default and persists
+        # the table to disk after each successful cell, so a partial
+        # run is recoverable.
+        mu_table, n_done, n_failed = calibrate_missing(
+            missing, ec=EC, verbose=True)
+        if n_failed:
+            still_missing = [c for c in missing
+                             if mu_key(*c) not in mu_table]
+            print(f"\n  ⚠ {n_failed} calibration(s) failed; "
+                  f"{len(still_missing)} cell(s) cannot run:", flush=True)
+            for c in still_missing[:5]:
+                print(f"      {c}", flush=True)
+            # Drop affected cells from the run rather than aborting —
+            # the user may have specified a wide grid and a single bad
+            # corner shouldn't kill the whole sweep.
+            before = len(cells)
+            cells = [(k, T, lb, N) for (k, T, lb, N) in cells
+                     if mu_key(k, T, lb) in mu_table]
+            print(f"  proceeding with {len(cells)}/{before} cells",
+                  flush=True)
+            if not cells:
+                raise SystemExit("no calibratable cells left.")
+        else:
+            print(f"  all {len(missing)} calibrations succeeded; "
+                  f"sweep starting now.", flush=True)
+
+    t_total = time.time()
+    classifications = []  # rows: (k, T, lb, N, seed, shape, ds_min, ds_max)
+    n_done = 0
+    n_failed = 0
+
+    # Hot-reload baseline: capture source file hashes now, after all
+    # imports are done. We compare against this between cells; any
+    # change triggers an os.execv restart. Disabled by default — opt
+    # in via --watch-reload for live development.
+    src_baseline = snapshot_source_hashes() if args.watch_reload else None
+    if args.watch_reload:
+        print(f"  --watch-reload: monitoring "
+              f"{len(src_baseline)} source file(s) for changes",
+              flush=True)
+
+    # Initial status: phase=running, nothing done yet
+    write_status_json(args.status_json, build_status(
+        phase="running",
+        started_at=t_total,
+        n_total=len(cells) * len(seed_list), n_done=0, n_failed=0,
+        next_cell=cells[0] if cells else None,
+    ))
+
+    # Ensure the flow/ subdirectory exists. All per-cell CSVs are
+    # written there to keep the project root clean as the dataset
+    # grows. Idempotent — no-op if already present.
+    os.makedirs(FLOW_DIR, exist_ok=True)
+
+    # ── Build unified work list ──────────────────────────────────────
+    # Both torus refs and sweep cells are independent SLQ-bound items;
+    # we used to run them in two serial nested for-loops. Pooling them
+    # together lets a 16-core box actually use all 16 cores instead of
+    # one, especially while the slowest item (e.g. L=45 4D, ~10 min)
+    # is grinding on its single worker.
+    #
+    # Each seed is its own work-item with its own CSV, so the cached-skip
+    # check below is per-(item, seed): a cell with 3 of 5 seeds already on
+    # disk resubmits only the 2 missing ones, and a fully-done cell skips
+    # all its seeds. That makes multi-seed runs resume cleanly.
+    work = []
+    cached_cell_count = 0
+
+    if not args.no_torus:
+        torus_dims = [int(x) for x in str(args.torus_d).split(",")
+                      if x.strip()]
+        for d_torus in torus_dims:
+            for N in N_vals:
+                for seed in seed_list:
+                    w = ("torus", d_torus, N, seed)
+                    if (os.path.exists(_csv_path_for(w))
+                            and not args.force):
+                        L = torus_L_for_N(N, d_torus)
+                        print(f"[torus ref] {d_torus}D L={L} "
+                              f"(N={L**d_torus}) seed={seed} "
+                              f"— cached, skipping", flush=True)
+                        continue
+                    work.append(w)
+
+    for (k, T, lb, N) in cells:
+        for seed in seed_list:
+            w = ("cell", k, T, lb, N, seed)
+            if (os.path.exists(_csv_path_for(w))
+                    and not args.force):
+                print(f"[cell] k={k} T={T} lb={lb} N={N} seed={seed} "
+                      f"— cached, skipping", flush=True)
+                cached_cell_count += 1
+                continue
+            work.append(w)
+
+    # Smallest-first ordering: tiny items finish in seconds and pop up
+    # in the dashboard right away, while the giant L=45 ref runs in
+    # parallel underneath. Operator gets early signal that the run is
+    # healthy instead of waiting 10 minutes for the first row.
+    work.sort(key=_work_cost_estimate)
+
+    # ── ETA + auto-shape tracking ────────────────────────────────────
+    # eta_done_samples: (N, wall_s) for every finished work-item, used to
+    # fit the cost-vs-N trend. eta_remaining: how many items of each N are
+    # still to finish.
+    # The shape analysis (heatmaps + histogram + summary) is regenerated in
+    # the background by a dedicated thread, throttled to at most once every
+    # SHAPE_REFRESH_SECS, so plotting never blocks worker dispatch. The
+    # dispatch loop only *requests* refreshes; the thread coalesces them.
+    eta_done_samples = []
+    eta_remaining = Counter(_work_N(w) for w in work)
+    SHAPE_REFRESH_SECS = float(getattr(args, "shape_refresh_secs", 10.0))
+    shape_refresher = _ShapeRefresher(min_interval_s=SHAPE_REFRESH_SECS)
+
+    n_done = cached_cell_count
+    n_failed = 0
+    classifications = []
+
+    # Worker count — default to all granted cores. With BLAS pinned to
+    # 1 thread per worker (env vars at module import) we can safely
+    # run as many parallel SLQs as we have cores.
+    if args.workers > 0:
+        n_workers = args.workers
+    else:
+        try:
+            n_workers = len(os.sched_getaffinity(0))
+        except (AttributeError, OSError):
+            n_workers = os.cpu_count() or 1
+    n_workers = min(n_workers, max(1, len(work)))   # don't over-allocate
+
+    n_torus_work = sum(1 for w in work if w[0] == "torus")
+    n_cell_work = sum(1 for w in work if w[0] == "cell")
+    print(f"\n  parallel dispatch: {n_workers} worker(s), "
+          f"{len(work)} item(s) "
+          f"({n_cell_work} cell + {n_torus_work} torus); "
+          f"{cached_cell_count} cell(s) cached",
+          flush=True)
+
+    # Initial status — phase=running, in_flight empty until pool starts
+    write_status_json(args.status_json, build_status(
+        phase="running",
+        started_at=t_total,
+        n_total=len(cells) * len(seed_list), n_done=n_done, n_failed=n_failed,
+        in_flight=[],
+    ))
+
+    if not work:
+        # Everything was cached — nothing to dispatch, fall through
+        # to classifications writing.
+        print(f"  all items cached; nothing to compute.", flush=True)
+    else:
+        # Use fork start method so workers inherit the parent's already-
+        # loaded modules (numpy, core modules, etc) without re-importing.
+        # BLAS env vars from the parent are inherited too. On non-fork
+        # platforms the default context is fine — they'll spawn fresh
+        # interpreters, slightly slower startup but otherwise correct.
+        ctx_name = "fork" if "fork" in mp.get_all_start_methods() else None
+        ctx = mp.get_context(ctx_name) if ctx_name else None
+
+        # in_flight: future -> work_item, drained as as_completed yields
+        in_flight = {}
+        params = {
+            "n_probes": args.n_probes,
+            "lanczos_m": args.lanczos_m,
+            "half_window": args.half_window,
+        }
+        last_source_check = time.time()
+        # Most recent CELL completion — torus completions don't touch
+        # this. Persisted across loop iterations so a torus finishing
+        # between cells doesn't blank the dashboard's "last:" row.
+        last_cell_persistent = None
+
+        try:
+            executor = concurrent.futures.ProcessPoolExecutor(
+                max_workers=n_workers, mp_context=ctx,
+                initializer=_worker_init)
+            try:
+                # Submit-on-demand pattern: keep at most `n_workers`
+                # futures in flight at any moment by priming the pool
+                # with the first batch and submitting the next item
+                # only when one completes. This way `in_flight` mirrors
+                # what's actually running — important for the dashboard,
+                # which would otherwise display 1200+ "in flight" cells
+                # when only 16 are really executing.
+                work_iter = iter(work)
+
+                def _submit_one():
+                    try:
+                        nw = next(work_iter)
+                    except StopIteration:
+                        return False
+                    in_flight[executor.submit(
+                        _run_one, nw, params, mu_table)] = nw
+                    return True
+
+                for _ in range(min(n_workers, len(work))):
+                    _submit_one()
+
+                while in_flight:
+                    done, _pending = concurrent.futures.wait(
+                        in_flight.keys(),
+                        return_when=concurrent.futures.FIRST_COMPLETED)
+                    for fut in done:
+                        w = in_flight.pop(fut)
+                        try:
+                            result = fut.result()
+                        except Exception as e:
+                            # Worker process died unexpectedly
+                            # (segfault, OOM-kill, etc). Don't let one
+                            # bad item kill the sweep; record it as
+                            # failed and keep going.
+                            print(f"[{_work_tag(w)}] WORKER CRASHED: "
+                                  f"{type(e).__name__}: {e}", flush=True)
+                            if w[0] == "cell":
+                                _, k, T, lb, N, seed = w
+                                classifications.append(
+                                    (k, T, lb, N, seed, "FAILED",
+                                     math.nan, math.nan))
+                                n_failed += 1
+                            eta_remaining[_work_N(w)] -= 1
+                            _submit_one()
+                            continue
+
+                        # Item finished (cell or torus): update the ETA
+                        # model. wall_s is real compute time; record it
+                        # even for failed cells (timing is still timing).
+                        eta_remaining[_work_N(w)] -= 1
+                        _wall = result.get("wall_s")
+                        if _wall and _wall > 0:
+                            eta_done_samples.append((_work_N(w), _wall))
+
+                        if w[0] == "cell":
+                            _, k, T, lb, N, seed = w
+                            if result["ok"]:
+                                n_done += 1
+                                classifications.append(
+                                    (k, T, lb, N, seed,
+                                     result["shape"],
+                                     result["ds_lo"], result["ds_hi"]))
+                                last_cell_persistent = {
+                                    "k": k, "T": T, "lb": lb, "N": N,
+                                    "seed": seed,
+                                    "shape": result["shape"],
+                                    "ds_min": result["ds_lo"],
+                                    "ds_max": result["ds_hi"],
+                                    "wall_s": round(result["wall_s"], 1)}
+                            else:
+                                n_failed += 1
+                                classifications.append(
+                                    (k, T, lb, N, seed, "FAILED",
+                                     math.nan, math.nan))
+                                last_cell_persistent = {
+                                    "k": k, "T": T, "lb": lb, "N": N,
+                                    "shape": "FAILED",
+                                    "error": result["error"][:200]}
+                        # Torus completions: log only, don't touch
+                        # n_done or last_cell_persistent (last_cell is
+                        # reserved for sweep cells; torus refs aren't
+                        # in the dashboard table).
+
+                        # Refill the pool with the next pending item.
+                        _submit_one()
+
+                        in_flight_list = [_work_in_flight_dict(ww)
+                                          for ww in in_flight.values()]
+
+                        # Periodic source-change check for --watch-reload.
+                        # Done at completion boundaries, every ~5s, so we
+                        # don't poll filesystem on every tick.
+                        if (args.watch_reload
+                                and time.time() - last_source_check > 5):
+                            current_hashes = snapshot_source_hashes()
+                            changed = detect_changes(src_baseline,
+                                                     current_hashes)
+                            if changed:
+                                reason = ", ".join(
+                                    os.path.basename(p)
+                                    for p in changed[:3])
+                                if len(changed) > 3:
+                                    reason += f" (+{len(changed)-3} more)"
+                                # Cancel pending futures and JOIN the
+                                # in-flight ones before we execv. os.execv
+                                # replaces this process image in place, so
+                                # any worker still running at that moment
+                                # would be orphaned (PDEATHSIG can't help —
+                                # the parent PID doesn't die, it's reused).
+                                # wait=True blocks only until the few
+                                # in-flight cells finish; everything already
+                                # on disk is skipped by cached-skip on the
+                                # restart, so the wait is bounded and cheap.
+                                executor.shutdown(wait=True,
+                                                  cancel_futures=True)
+                                restart_self(
+                                    reason, args.status_json,
+                                    build_status(
+                                        phase="running",
+                                        started_at=t_total,
+                                        n_total=len(cells) * len(seed_list),
+                                        n_done=n_done,
+                                        n_failed=n_failed,
+                                        in_flight=in_flight_list,
+                                    ))
+                                # restart_self does not return on success
+                            last_source_check = time.time()
+
+                        eta = estimate_eta_seconds(
+                            eta_done_samples,
+                            list(eta_remaining.elements()),
+                            n_workers)
+                        write_status_json(args.status_json, build_status(
+                            phase="running",
+                            started_at=t_total,
+                            n_total=len(cells) * len(seed_list),
+                            n_done=n_done, n_failed=n_failed,
+                            last_cell=last_cell_persistent,
+                            in_flight=in_flight_list,
+                            eta_sec_override=eta,
+                        ))
+
+                        # Ask the background thread to regenerate plots.
+                        # Non-blocking: it renders off the dispatch path and
+                        # at most once per SHAPE_REFRESH_SECS, so finished
+                        # workers never idle waiting on matplotlib.
+                        shape_refresher.request()
+            finally:
+                executor.shutdown(wait=True)
+                # Quiesce the background plotter before the synchronous
+                # final refresh in _finalize_sweep, so they don't overlap.
+                shape_refresher.stop()
+        except KeyboardInterrupt:
+            print("\n  Ctrl-C received; cancelling pending futures…",
+                  flush=True)
+            try:
+                executor.shutdown(wait=False, cancel_futures=True)
+            except Exception:
+                pass
+            # Still write out everything for the cells that DID finish:
+            # plots + classifications CSV + a terminal status. Without this
+            # a stopped sweep leaves only flow/ and no heatmaps.
+            try:
+                _finalize_sweep(args, classifications, cells, seed_list,
+                                t_total, n_done, n_failed,
+                                phase="interrupted")
+            except Exception as e:
+                print(f"  [finalize] skipped on interrupt: "
+                      f"{type(e).__name__}: {e}", flush=True)
+            return
+
+    _finalize_sweep(args, classifications, cells, seed_list, t_total,
+                    n_done, n_failed, phase="done")
+
+
+if __name__ == "__main__":
+    main()
