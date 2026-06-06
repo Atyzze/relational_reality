@@ -52,12 +52,11 @@ and the flow-mode maps refresh automatically as new data arrives.
 server and the sweep workers. The web page is purely a *reporting* surface — it
 shows incoming data and does not start or stop anything.
 
-Later runs are the same — the script reuses the venv and relaunches. To set up
-(or refresh dependencies) **without** launching, pass `--no-run`:
+Later runs are the same — the script reuses the venv and relaunches. 
 
 ```bash
-./setup.sh --no-run        # macOS / Linux
-setup.bat  --no-run        # Windows
+./setup.sh        # macOS / Linux
+setup.bat          # Windows
 ```
 
 …then start it yourself:
