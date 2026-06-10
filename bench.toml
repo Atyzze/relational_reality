@@ -1,33 +1,33 @@
-# memory_benchmark.toml
+# bench.toml
 # =====================================================================
-# One file, all knobs, for main.py bench. (TOML = "Tom's Obvious,
-# Minimal Language" — after Tom Preston-Werner; not "text-only markup".)
+# One file, all knobs, for `python main.py bench`.
 #
-# The benchmark profiles the graph-GROWTH engine — the Metropolis core
-# from src/core/physics_engine.py — as a memory-latency workload, and
-# pits the existing Numba engine (the "py" track, our reference) against
-# the C++ engine (engine_core.cpp) AND the Rust engine (engine_core.rs),
-# side by side, at every stage. All three implement the same Hamiltonian and
-# return the same array construct; cpp & rust share an RNG so are bit-identical.
+# The benchmark profiles the graph-GROWTH engine (the Metropolis core) as a
+# memory workload across three back-ends — py (Numba, the reference), cpp,
+# and rust (cpp & rust share an RNG, so they are bit-identical) — and, more
+# importantly, MEASURES the machine's core topology instead of assuming it:
 #
-# Metric: TIME TO EQUILIBRIUM. Each cell grows one graph from empty to its
-# final equilibrium and times the whole run (no warm/measure split, no mid-run
-# polling). The live HTML refreshes ~every 4s, one update per finished cell.
+#   S  solo map     every physical core alone, N doubling from n_start past
+#                   the DRAM cliff → per-core quality + each core's cache
+#                   edge (V-Cache cores keep speed to ~3× larger N)
+#   G  grouping     pair-interference search (union-find): SMT siblings at a
+#                   cache-resident probe, shared-L3/CCD groups at a probe of
+#                   0.9× each core's MEASURED cache edge — no /sys priors;
+#                   /sys is cross-checked and disagreements reported
+#   C  scaling      with the DISCOVERED groups: packed vs spread per worker
+#                   count around the cache edges, then spread/all doubling N
+#                   to the RAM cap (the high-N answer the sweep needs)
+#   L  languages    py vs cpp vs rust on the best core (full ladder) + all-
+#                   core spread at the largest sizes
 #
-# Sweep ORDER (this is the whole point):
-#   For each graph size N, expand parallelism first —
-#     1 worker pinned to each core in turn, then groups of 2, 4, 8, …
-#     up to every logical core at once — running ALL tracks at each step.
-#   THEN grow N (×n_factor) and repeat the whole core-expansion.
-#   As N grows the per-worker footprint grows, so the concurrency ladder
-#   automatically truncates (16 workers won't fit, then 8, then …), down
-#   to a single worker. The sweep stops at the largest N where ONE worker
-#   still fits in RAM minus the reserve — i.e. the biggest blob the memory
-#   system can hold without swapping to disk.
+# Every measurement is TIME-BOXED (warm to the degree target under a wall
+# cap, then a fixed timed budget), so total runtime is known in advance —
+# typically tens of minutes, not days — and resume skips finished cells.
+# Outputs: csv/json/html + percore_map.png + a [compute].workers + pinning
+# recommendation printed at the end.
 #
-#   Run:  python main.py bench
-#   Preview the exact schedule without running anything:
-#         python main.py bench --dry-run
+#   Run:      python main.py bench
+#   Preview:  python main.py bench --dry-run
 
 [engine]
 # Growth Hamiltonian knobs — H = edge_cost·E + degree_penalty·Σ d².
@@ -59,22 +59,32 @@ cpp_mode      = 1         # C++ track: 0 = scalar, 1 = + intra-step prefetch (sa
 equilibrium_sweeps = 0
 reps_per_cell      = 1    # repeat each (N, group, track) cell this many times; report the median
 
-[schedule]
-n_start   = 8             # start tiny: at N=8 a simple graph can't exceed degree 7, so
-                          # avg degree caps below k=8 — the table shows that phase boundary
-n_factor  = 2             # multiply N by this each round
-n_max     = 0             # 0 = auto: grow until even ONE worker won't fit (RAM−reserve)
-max_concurrency = 0       # 0 = up to every logical core; or cap it (e.g. 16)
-# The single-core pass is run in full (every core individually) only for the first
-# `full_percore_rounds` sizes — enough to establish the per-core pattern. After that,
-# concurrency-1 runs only the fastest and slowest core (the V-Cache vs non-V-Cache
-# representatives), not all of them, since within a cache class the cores are equal.
-full_percore_rounds = 8
-# coverage: which core-groups to run at each concurrency level ≥ 2.
-#   "disjoint"       — every disjoint group of that size (full per-core map; slowest)
-#   "representative" — one group per distinct cache class (e.g. V-Cache CCD vs normal)
-#   "first"          — just the first group (fastest; still expands the ladder)
-coverage  = "disjoint"
+[phases]
+# Phase-structured run (see src/benchmarks/topo_bench.py):
+#   S  solo per-core map      every physical core alone, N=n_start doubling
+#                             to solo_n_max — per-core quality + cache cliffs
+#   G  grouping (MEASURED)    pair-interference search discovers SMT siblings
+#                             and shared-L3 (CCD/V-Cache) groups; cross-checked
+#                             against /sys, measurement wins
+#   C  scaling                discovered groups, packed vs spread, around the
+#                             cache edges; then spread/all keeps doubling N to
+#                             the RAM cap (the high-N answer the sweep needs)
+#   L  languages              py vs cpp vs rust on the best core (full ladder)
+#                             + all-core spread at the largest sizes
+n_start       = 8         # N=8 first: max simple-graph degree is 7, so the
+                          # realised k caps below the k=8 target — the phase
+                          # boundary shows up as the very first data point
+budget_s      = 0.5       # timed steady-state seconds per measurement (the
+                          # whole run's length is ~n_cells × this; time-boxed,
+                          # so the ETA is arithmetic, not a model)
+warm_cap_s    = 45        # wall cap on growing to the degree target before
+                          # timing; the ACHIEVED degree is recorded per cell,
+                          # so an under-warmed huge-N probe is visible
+solo_n_max    = 0         # 0 = auto: ~4× the largest L3 (past the DRAM cliff)
+smt_threshold = 0.30      # co-run slowdown above this at cache-resident N
+                          # ⇒ same physical core (SMT siblings)
+l3_threshold  = 0.10      # co-run slowdown above this at ~0.6×L3 working set
+                          # ⇒ shared L3 (same CCD)
 
 [cpu]
 physical_only   = false   # true = ignore SMT siblings (use one logical CPU per physical core)

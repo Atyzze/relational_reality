@@ -263,13 +263,26 @@ def _cmd_selftest(_argv):
 
 
 def _cmd_bench(argv):
-    """Run the cache->DRAM time-to-equilibrium memory benchmark
-    (src/benchmarks/memory_benchmark.py). Reads bench.toml by default. This is a
-    one-off hardware characterization, not part of a sweep."""
+    """Run the phase-structured engine benchmark (src/benchmarks/topo_bench.py
+    via memory_benchmark): per-core solo map, MEASURED topology discovery
+    (SMT siblings + shared-L3/V-Cache groups by pair interference), packed-vs-
+    spread scaling, and a py/cpp/rust comparison — ending in a [compute].workers
+    + pinning recommendation. Reads bench.toml; one-off hardware
+    characterization, not part of a sweep."""
     from benchmarks import memory_benchmark as mb
     sys.argv = ["bench"] + list(argv)
     mb.main()
     return 0
+
+
+def _cmd_walkers(argv):
+    """Monte-Carlo walker cross-check: simulate actual random walkers on one
+    measured cell's graph (uniformised CTRW, exact via Poisson mixing) and
+    overlay their return-probability d_s(t) against the cell's SLQ curve.
+    Same quantity, independent estimator — validates the spectral pipeline."""
+    from physics_tests import walker_probe
+    return walker_probe.main(list(argv) + (["--dir", OUTPUT]
+                                           if "--dir" not in argv else []))
 
 
 def _cmd_reverify(argv):
@@ -299,6 +312,7 @@ _COMMANDS = {
     "bench": _cmd_bench, "mem-bench": _cmd_bench, "memory": _cmd_bench,
     "selftest": _cmd_selftest, "test": _cmd_selftest,
     "reverify": _cmd_reverify,
+    "walkers": _cmd_walkers, "walkprobe": _cmd_walkers,
 }
 
 # One-line description per mode, shown on EVERY parse miss — the contract is
@@ -326,12 +340,20 @@ diagnostic sub-commands (operate on the engines or on existing output/):
                                  cell — full per-shell/per-time curves vs a
                                  reference torus. (alias: isotropy; see
                                  `python main.py uniformity --help`)
-  python main.py bench ...       cache->DRAM memory benchmark, a one-off
-                                 hardware characterization that prints the
-                                 recommended [compute].workers. Reads
-                                 bench.toml. (aliases: mem-bench, memory)
+  python main.py bench ...       phase-structured engine benchmark: per-core
+                                 solo map, MEASURED topology (SMT + V-Cache
+                                 groups found by pair interference, not /sys
+                                 trust), packed-vs-spread scaling, py/cpp/rust
+                                 compare; prints the recommended
+                                 [compute].workers + pinning and writes
+                                 percore_map.png. Reads bench.toml.
+                                 (aliases: mem-bench, memory)
   python main.py selftest        regression checks: figures + cell pipeline +
                                  ETA model. (alias: test)
+  python main.py walkers ...     Monte-Carlo walker cross-check of one cell's
+                                 SLQ d_s(t) curve — the same return probability
+                                 measured by simulating actual walkers, e.g.
+                                 `walkers k8 T0.004 lb0.99 N16000 s42`.
   python main.py reverify        re-judge equilibration verdicts from the
                                  traces stored in existing meta sidecars —
                                  seconds, no recompute. Run once after

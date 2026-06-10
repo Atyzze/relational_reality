@@ -271,16 +271,25 @@ the science; these are the workshop drawer:
 python main.py engines        # list graph-growth engines + their parameters
 python main.py figures        # regenerate the heatmaps/charts from output/
 python main.py uniformity ... # the standalone field-isotropy deep-dive on one cell
-python main.py bench  ...      # the cache→DRAM memory benchmark (reads bench.toml)
-python main.py selftest        # regression checks (figures + pipeline + ETA model)
+python main.py bench  ...     # phase-structured engine benchmark (reads bench.toml)
+python main.py walkers ...    # MC-walker cross-check of one cell's SLQ d_s(t)
+python main.py reverify       # re-judge equilibration verdicts from stored traces
+python main.py selftest       # regression checks (figures + pipeline + ETA model)
 ```
 
 Anything after the sub-command is forwarded to it, so e.g. `python main.py bench
---dry-run` previews the benchmark schedule and `python main.py bench --help`
-shows its options. The memory benchmark is deliberately a sub-command, not a
-config switch — it's a one-off hardware characterization you run once on a new
-machine to read the recommended `[compute].workers`, not something a normal
-launch should ever trigger.
+--dry-run` previews the benchmark plan and `python main.py bench --help` shows
+its options. The benchmark is deliberately a sub-command, not a config switch —
+a one-off hardware characterization you run once per machine. It MEASURES the
+core topology rather than trusting `/sys`: a solo map of every physical core
+across the N ladder (per-core quality + each core's cache edge), then a
+pair-interference search that discovers SMT siblings and shared-L3 groups —
+on an X3D part, the V-Cache CCD identifies itself as the group whose measured
+cache edge sits ~3× further out — then packed-vs-spread scaling with the
+discovered groups and a py/cpp/rust comparison. Measurements are time-boxed,
+so the whole run is tens of minutes and resumable; it ends with a
+`[compute].workers` + pinning recommendation, and writes `percore_map.png`
+(core × N throughput, rows grouped by measured L3 domain).
 
 `main.py` runs the sweep with `output/` as the working directory, which is how
 generated files stay out of `src/`.
@@ -348,11 +357,20 @@ generated files stay out of `src/`.
   cost-vs-N trend and predicts each remaining cell from its own N.
 - **`d_s` everywhere means the spectral dimension** (the shape summary's
   `d_s_local` is the local spectral dimension read off at the curve's dip).
-  This project is about the spectral dimension only. Other notions of
-  dimension (Hausdorff/box-counting, random-walk return probability) are not
-  measured here — for these graphs they aren't expected to stabilise, so they
-  are deliberately out of scope; anyone who wants one can add a probe that
-  reuses the existing BFS-distance helper in `core.cell_tests`.
+  This project is about the spectral dimension only — and the SLQ heat
+  kernel IS the random-walker return probability. With the
+  combinatorial Laplacian L = D − A, the probe's Z(t) = (1/N)·Tr e^{−tL} is
+  exactly the average probability that a continuous-time random walker (every
+  edge fires at rate 1, so a node of degree d hops at rate d) has returned to
+  its start after time t, and d_s(t) = −2·dln Z/dln t. SLQ just computes that
+  quantity spectrally — far better noise-per-CPU-second than simulating
+  walkers, whose return counts die as t^{−d_s/2} exactly where the IR matters.
+  `python main.py walkers k8 T0.004 lb0.99 N16000 s42` runs the Monte-Carlo
+  twin (uniformised CTRW, Poisson-mixed so it is exact in time) on a measured
+  cell and overlays the two d_s(t) curves — same object, independent
+  estimator, an end-to-end check of the Laplacian build, the SLQ quadrature
+  and the slope window. Other definitions of dimension (Hausdorff /
+  box-counting) remain deliberately out of scope
 - **Reference lattices** are built by `core.cell_tests.build_torus_cell`;
   analytically-known reference builders live in `metrics/reference_lattices.py`.
 
