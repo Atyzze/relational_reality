@@ -17,14 +17,13 @@ Outputs three things:
 
 Usage
 -----
-    NOTE: `python main.py` launches only the dashboard + auto-sweep —
-    there is no `main.py shape` subcommand. The sweep calls this module's
-    main() directly (shape_analysis.main(["--dir", "."])) to refresh the
-    heatmaps; the examples below show that interface.
+    Standalone script (run from the project root); the sweep also calls
+    this module's main() directly (shape_analysis.main(["--dir", "."]))
+    to auto-refresh the heatmaps.
 
-    python main.py shape                           # uses ./flow/
-    python main.py shape --dir /data2/28/new
-    python main.py shape --N 1024000 4096000       # restrict N
+    python src/shape_analysis.py --dir output
+    python src/shape_analysis.py --dir /data2/28/new
+    python src/shape_analysis.py --dir output --N 1024000 4096000
 
 The dip is found with two robust criteria, not just argmin:
   (a) d_s(t) has at least one local maximum to its left (rules out
@@ -97,19 +96,24 @@ def extract_shape(t, d, in_w, climb_threshold=0.3,
     ds = dw.copy()
     ds[1:-1] = (dw[:-2] + dw[1:-1] + dw[2:]) / 3.0
 
-    # Find local extrema by sign-change of the discrete derivative
-    # (in log-t since t is log-spaced).
-    log_t = np.log(tw)
-    dd = np.gradient(ds, log_t, edge_order=2)
-
+    # Find local extrema by sign change of the FIRST DIFFERENCE: index i is
+    # a peak when the curve rises into it (ds[i] > ds[i-1]) and falls out of
+    # it (ds[i] > ds[i+1]), a minimum for the mirrored case. The previous
+    # version tested np.gradient at i-1 and i+1 while SKIPPING i, which could
+    # both miss an extremum whose sign flip happens between adjacent samples
+    # and double-count broad ones. The smoothing above already de-noises, so
+    # strict adjacent comparison is the right primitive. (t is log-spaced, so
+    # comparing raw differences is monotone-equivalent to d/d(log t).)
+    d1 = np.diff(ds)                     # d1[i] = ds[i+1] - ds[i]
     n_peaks = 0
     peaks_idx = []
     mins_idx = []
-    for i in range(1, len(dd) - 1):
-        if dd[i - 1] > 0 and dd[i + 1] < 0:
+    for i in range(1, len(ds) - 1):
+        left, right = d1[i - 1], d1[i]
+        if left > 0 and right < 0:
             peaks_idx.append(i)
             n_peaks += 1
-        elif dd[i - 1] < 0 and dd[i + 1] > 0:
+        elif left < 0 and right > 0:
             mins_idx.append(i)
 
     has_dip = False
@@ -173,6 +177,15 @@ def scan(dir_):
         try:
             t, d, w = load_flow(p)
             d_s_local, dip_t, has_dip, n_peaks = extract_shape(t, d, w)
+            # in-window flatness: the spread of d_s(t) across the trustworthy
+            # window. ~0 = a genuine plateau; large = a hump/dip whose mean
+            # can sit near a value the curve is never actually flat at. This
+            # is the shape signal the scalar d_s_local can't carry.
+            _m = np.asarray(w, dtype=bool)
+            _dw = np.asarray(d, dtype=float)
+            _dw = _dw[_m & np.isfinite(_dw)]
+            d_s_flat = float(np.std(_dw, ddof=1)) if _dw.size >= 2 \
+                else float("nan")
         except Exception as e:
             print(f"  skip {os.path.basename(p)}: {e}")
             continue
@@ -180,6 +193,7 @@ def scan(dir_):
             "k": k, "T": T, "lb": lb, "N": N, "seed": seed,
             "d_s_local": d_s_local, "dip_t": dip_t,
             "has_dip": has_dip, "n_peaks": n_peaks,
+            "d_s_flat": d_s_flat,
         }
 
 
@@ -247,11 +261,39 @@ def plot_histogram(records, out, restrict_N=None):
         return
 
     d_s_local_all = np.array([r["d_s_local"] for r in records])
+
+    # Per-N panels stacked above the pooled view: each N rung has its own
+    # distribution that shifts upward with N (the heat-trace window moves),
+    # so the POOLED histogram's "multimodality" is partly the N-ladder
+    # itself. Reading quantization off the pooled panel alone is a trap —
+    # the per-N panels are where real per-phase peaks must show up.
+    Ns_here = sorted({r["N"] for r in records})
+    n_pan = len(Ns_here)
+    fig, axes = plt.subplots(n_pan + 1, 1,
+                             figsize=(10, 2.0 * n_pan + 5.5),
+                             sharex=True,
+                             gridspec_kw={"height_ratios": [1] * n_pan + [2.2]})
+    axes = np.atleast_1d(axes)
+    bins = np.arange(0.5, 10.05, 0.1)
+    for ax_n, N in zip(axes[:-1], Ns_here):
+        rn = [r for r in records if r["N"] == N]
+        dw = np.array([r["d_s_local"] for r in rn if r["has_dip"]])
+        dn = np.array([r["d_s_local"] for r in rn if not r["has_dip"]])
+        if len(dw):
+            ax_n.hist(dw, bins=bins, alpha=0.75, color="#7ec96e",
+                      edgecolor="white", linewidth=0.3)
+        if len(dn):
+            ax_n.hist(dn, bins=bins, alpha=0.55, color="#c96e6e",
+                      edgecolor="white", linewidth=0.3)
+        for d_int in range(1, 8):
+            ax_n.axvline(d_int, color="#888", ls=":", lw=0.8, alpha=0.6,
+                         zorder=0)
+        ax_n.set_ylabel(f"N={N:,}\n({len(rn)})", fontsize=8)
+        ax_n.grid(True, axis="y", alpha=0.25)
+
+    ax = axes[-1]
     d_with = np.array([r["d_s_local"] for r in records if r["has_dip"]])
     d_without = np.array([r["d_s_local"] for r in records if not r["has_dip"]])
-
-    fig, ax = plt.subplots(figsize=(10, 5.5))
-    bins = np.arange(0.5, 10.05, 0.1)
     if len(d_with):
         ax.hist(d_with, bins=bins, alpha=0.75, label=f"has dip (n={len(d_with)})",
                 color="#7ec96e", edgecolor="white", linewidth=0.3)
@@ -267,17 +309,18 @@ def plot_histogram(records, out, restrict_N=None):
     n_str = (f"N ∈ {sorted(restrict_N)}" if restrict_N
              else "all N pooled")
     ax.set_xlabel("spectral dimension d_s (dip floor, or fallback window-average)")
-    ax.set_ylabel("count")
-    ax.set_title(f"Distribution of local spectral dimension d_s across "
-                 f"({len(records)} cells, {n_str})\n"
-                 f"Multimodal peaks at integers ⇒ quantized phases.  "
-                 f"Smooth ⇒ continuous tuning.", fontsize=11)
+    ax.set_ylabel(f"count ({n_str})")
+    axes[0].set_title(f"Distribution of local spectral dimension d_s "
+                      f"({len(records)} cells)\n"
+                      f"top: per-N (peaks here = real phases) · bottom: "
+                      f"pooled (the N-ladder shifts rungs — pooled "
+                      f"multimodality can be the ladder itself)", fontsize=11)
     ax.legend()
     ax.grid(True, axis="y", alpha=0.25)
     fig.tight_layout()
     fig.savefig(out, dpi=140)
     plt.close(fig)
-    print(f"[hist] saved → {out}")
+    print(f"[hist] saved → {out}  ({n_pan} per-N panels + pooled)")
 
     # also report histogram-derived diagnostic
     if len(d_s_local_all) > 20:
@@ -308,7 +351,7 @@ def _cell_stat(finite_vals, metric):
     """
     if not finite_vals:
         return (float("nan"), "no_value")
-    if metric == "mean":
+    if metric in ("mean", "flat"):
         return (float(np.mean(finite_vals)), "value")
     # seed_std: sample std (ddof=1) needs ≥2 finite seeds
     if len(finite_vals) >= 2:
@@ -352,6 +395,8 @@ def plot_heatmap(records, out, restrict_N=None, metric="mean", failures=None):
     sweep log still lists it.
     """
     spread = (metric == "seed_std")
+    sequential = metric in ("seed_std", "flat")   # 0-anchored colour scale
+    field = "d_s_flat" if metric == "flat" else "d_s_local"
     failures = failures or {}
 
     def fail_kind(k, T, lb, N):
@@ -389,8 +434,9 @@ def plot_heatmap(records, out, restrict_N=None, metric="mean", failures=None):
             present = set()
             for r in cell_recs:
                 present.add((r["k"], r["lb"]))
-                if np.isfinite(r["d_s_local"]):
-                    finite_vals[(r["k"], r["lb"])].append(r["d_s_local"])
+                v = r.get(field)
+                if v is not None and np.isfinite(v):
+                    finite_vals[(r["k"], r["lb"])].append(v)
             Z = np.full((len(all_ks), len(all_lbs)), np.nan)
             kinds = np.empty((len(all_ks), len(all_lbs)), dtype=object)
             for i, k in enumerate(all_ks):
@@ -403,17 +449,21 @@ def plot_heatmap(records, out, restrict_N=None, metric="mean", failures=None):
                         val, kind = float("nan"), (fk if fk else "no_file")
                     Z[i, j] = val
                     kinds[i, j] = kind
-                    if spread and kind == "value":
+                    if sequential and kind == "value":
                         max_spread = max(max_spread, val)
             panels[(ri, ci)] = (Z, kinds, present)
 
-    if spread:
+    if metric == "seed_std":
         n_seeds_seen = len(set(r["seed"] for r in records))
         if n_seeds_seen < 2:
             print("[map] only one seed in the data — no spread to show; "
                   "skipping seed-std map.")
             return
         vmin, vmax, cmap = 0.0, max(0.05, max_spread), "magma"
+    elif metric == "flat":
+        # in-window std of d_s. 0 = flat plateau (good). Cap the top so a few
+        # wild humps don't wash out the scale. magma_r: flat = bright.
+        vmin, vmax, cmap = 0.0, max(0.4, min(2.0, max_spread)), "magma_r"
     else:
         vmin, vmax, cmap = 1.0, 7.0, "turbo"
     print(f"[map] {len(Ts)} T × {len(Ns)} N grid "
@@ -467,10 +517,13 @@ def plot_heatmap(records, out, restrict_N=None, metric="mean", failures=None):
                     kind = kinds[i, j]
                     if kind == "value":
                         v = Z[i, j]
-                        if spread:
+                        if sequential:
                             txt = f"{v:.2f}"
-                            dark = (v / vmax) > 0.55  # magma: bright→dark txt
-                            color = "black" if dark else "white"
+                            norm = (v / vmax) if vmax else 0.0
+                            if metric == "flat":   # magma_r: bright at low v
+                                color = "black" if norm < 0.5 else "white"
+                            else:                  # magma: bright at high v
+                                color = "black" if norm > 0.55 else "white"
                         else:
                             txt = f"{v:.1f}"
                             color = ("white" if v < 3.5 or v > 5.5
@@ -526,7 +579,9 @@ def plot_heatmap(records, out, restrict_N=None, metric="mean", failures=None):
     if im is not None:
         cb = fig.colorbar(im, ax=axes.ravel().tolist(),
                           fraction=0.025, pad=0.02)
-        cb.set_label("seed-to-seed std of d_s" if spread
+        cb.set_label("seed-to-seed std of d_s" if metric == "seed_std"
+                     else "in-window std of d_s   (0 = flat plateau)"
+                     if metric == "flat"
                      else "spectral dimension d_s")
 
     if spread:
@@ -534,9 +589,19 @@ def plot_heatmap(records, out, restrict_N=None, metric="mean", failures=None):
                 "— the disorder variance a single seed can't see")
         cellline = "cell = sample std of d_s over seeds (ddof=1)"
         extra = "    n1  only one readable seed (no spread)"
+    elif metric == "flat":
+        head = ("Flatness of d_s(t) across (k, ℓ)  —  the SHAPE companion "
+                "to the value map (is the curve a plateau, or a hump?)")
+        cellline = ("cell = mean-over-seeds of the in-window std of d_s(t)  "
+                    "—  LOW (bright) = real plateau;  HIGH (dark) = hump/dip "
+                    "that only *averages* near its value")
+        extra = ""
     else:
-        head = "Local spectral dimension d_s across (k, ℓ)"
-        cellline = "cell = mean d_s over seeds present"
+        head = ("Local spectral dimension d_s across (k, ℓ)  —  one SCALAR "
+                "SUMMARY per cell, NOT a plateau height")
+        cellline = ("cell = mean-over-seeds of d_s_local (dip floor, else "
+                    "window-mean of d_s(t)) — a value ≈4 can be a hump "
+                    "*through* 4, not flat *at* 4; read flow_modes for shape")
         extra = ""
     import time as _t
     _stamp = _t.strftime("%Y-%m-%d %H:%M:%S")
@@ -575,6 +640,10 @@ def main(argv=None):
     ap.add_argument("--summary-out", default="shape_summary.csv")
     ap.add_argument("--hist-out", default="shape_histogram.png")
     ap.add_argument("--map-out", default="shape_heatmap.png")
+    ap.add_argument("--flat-out", default="shape_heatmap_flatness.png",
+                    help="Output for the flatness (curve-shape) map: the "
+                         "in-window std of d_s(t) per cell. Low = a real "
+                         "plateau, high = a hump that only averages near 4.")
     ap.add_argument("--seed-std-out", default="shape_heatmap_seed_std.png",
                     help="Output for the seed-to-seed spread map. Written "
                          "automatically when the data has >1 seed per cell.")
@@ -620,6 +689,11 @@ def main(argv=None):
     # other) distinctly from not-yet-run ones.
     failures = load_failures(args.dir)
     plot_heatmap(records, args.map_out, restrict_N=restrict, metric="mean",
+                 failures=failures)
+    # The shape companion: same layout, but each cell is how flat the curve
+    # is in-window (not its average height). A near-4 cell here is only
+    # interesting if it's ALSO flat (bright) in this map.
+    plot_heatmap(records, args.flat_out, restrict_N=restrict, metric="flat",
                  failures=failures)
     # The spread map self-skips (with a note) when there is only one seed,
     # so this is safe to always call.

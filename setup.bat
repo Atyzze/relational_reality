@@ -4,24 +4,10 @@ REM Mirrors setup.sh. Double-click it in Explorer, or run from a terminal:
 REM
 REM     setup.bat
 REM
-REM Pass --no-run to set up the environment WITHOUT launching the app
-REM (e.g. when you just want to refresh dependencies):
-REM
-REM     setup.bat --no-run
-REM
 REM Safe to re-run; it reuses the existing .venv and just re-checks/updates.
 
 setlocal enableextensions
 cd /d "%~dp0"
-
-set "RUN_AFTER=1"
-if /I "%~1"=="--no-run" set "RUN_AFTER=0"
-if not "%~1"=="" if /I not "%~1"=="--no-run" (
-    echo Unknown option: %~1
-    echo Usage: setup.bat [--no-run]
-    pause
-    exit /b 2
-)
 
 REM --- Find a Python launcher: prefer the 'py' launcher, then 'python'. -------
 set "PYLAUNCH="
@@ -77,20 +63,13 @@ if errorlevel 1 (
     exit /b 1
 )
 
-if "%RUN_AFTER%"=="1" (
-    echo.
-    echo ==^> Setup complete - launching the dashboard now.
-    echo     ^(opens in your browser and starts sweeping; press Ctrl-C to stop^)
-    echo.
-    "%VENV_PY%" main.py
-    echo.
-    echo ==^> Stopped. Re-run setup.bat any time to resume ^(finished cells are skipped^).
-    pause
-) else (
-    echo.
-    echo ==^> Setup complete. Start the project with:
-    echo       .venv\Scripts\python.exe main.py
-    pause
-)
+echo.
+echo ==^> Setup complete - launching the dashboard now.
+echo     ^(opens in your browser and starts sweeping; press Ctrl-C to stop^)
+echo.
+"%VENV_PY%" main.py
+echo.
+echo ==^> Stopped. Re-run setup.bat any time to resume ^(finished cells are skipped^).
+pause
 
 endlocal

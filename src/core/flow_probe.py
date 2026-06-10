@@ -12,21 +12,21 @@ flat d_s = 4. This script distinguishes the two.
 
 Usage
 -----
-    NOTE: `python main.py` launches only the dashboard + auto-sweep —
-    there is no `main.py flow` subcommand. This module is used as a
-    library (import it and call run_flow_for_cell / main()); the example
-    commands below show that interface, not a main.py route.
+    This is a backend-package module (it relies on main.py's sys.path
+    setup), so it is driven as a library — there is no `main.py flow`
+    subcommand and the file is not directly runnable. From the project
+    root, with output/ as the working directory:
 
     # Single cell from your sweep
-    python main.py flow --k 8 --T 0.005 --lb 0.94 --N 4000 --seed 42
+    python -c "import sys; sys.path[:0]=['src']; \\
+               from core.flow_probe import main; \\
+               main(['--k','8','--T','0.005','--lb','0.94',
+                     '--N','4000','--seed','42'])"
 
-    # Multiple cells (overlay plot)
-    python main.py flow --cells "8,0.005,0.94 9,0,0.95 8,0,0.99" \\
-                      --N 16000 --seed 42
-
-    # Reuse μ from existing mu_table.json (default), or override
-    python main.py flow --k 8 --T 0.005 --lb 0.94 --N 4000 --seed 42 \\
-                      --n-probes 60 --lanczos-m 400
+    # Multiple cells (overlay plot): pass
+    #   ['--cells', '8,0.005,0.94 9,0,0.95', '--N', '16000']
+    # Extra probes / Lanczos depth:
+    #   [..., '--n-probes', '60', '--lanczos-m', '400']
 
 Outputs (in cwd):
     flow_k{k}_T{T}_lb{lb}_N{N}_s{seed}.csv   # raw t, Z, d_s data
@@ -57,29 +57,25 @@ Design notes
 """
 
 import argparse
-import json
 import math
 import os
-import sys
 import time
 from dataclasses import dataclass
 
 import numpy as np
 
 # Local imports — all from existing modules, no changes to them.
-from core.physics_engine import PhysicsEngine
-from metrics import get_graph_stats
 from metrics.numba_kernels import _build_laplacian_csr_jit, _extract_lcc_nodes
 from metrics.stochastic_lanczos import _lanczos_slq, _lanczos_slq_scipy
 from core.graph_builder import build_graph
-from core.project_constants import MAX_DEG, MU_JSON, PROD_SWEEPS
-from core.disk_io import load_mu_table, mu_key
+from core.project_constants import MAX_DEG, MU_JSON, FLOW_DIR
+from core.disk_io import load_mu_table, mu_key, resolve_cell_mu
 
 
 # ═══════════════════════════════════════════════════════════════════
 #  Per-probe Z(t) accumulation — the SLQ heat-kernel inner loop
 # ═══════════════════════════════════════════════════════════════════
-def slq_per_probe_Z(L_indptr, L_indices, L_data, N_eff, lam_max_bound,
+def slq_per_probe_Z(L_indptr, L_indices, L_data, N_eff,
                     n_probes, lanczos_m, t_grid, seed=20250419,
                     return_quad=False):
     """Run SLQ; return per_probe_Z of shape (n_probes, n_t).
@@ -212,12 +208,26 @@ def compute_ds_flow(per_probe_Z, t_grid, N_eff, lam_max_bound,
     slope_mean = local_slope(log_t, log_Z, weights, half_window)
     d_s_mean = -2.0 * slope_mean
 
-    # Jackknife: leave-one-probe-out
+    # Jackknife: leave-one-probe-out. Both leave-one-out quantities are
+    # derived from totals rather than rebuilt per probe:
+    #   • the mean from the running sum:    (ΣZ − Z_p)/(n−1)
+    #   • the variance by EXACT downdating of the centred sum of squares:
+    #         SS_loo(p) = SS_tot − n/(n−1) · (Z_p − mean_tot)²
+    #     (algebraic identity, not the catastrophic E[x²]−E[x]² shortcut —
+    #     everything stays centred, so it is numerically safe even when Z
+    #     is large), giving var_loo = SS_loo/(n−2) for the ddof=1 std of
+    #     the n−1 remaining probes. This replaces an O(P²·n_t) loop of
+    #     np.delete(...).std() with one vectorised (P, n_t) expression.
+    Z_total = per_probe_Z.sum(axis=0)
+    SS_tot = ((per_probe_Z - Z_mean[None, :]) ** 2).sum(axis=0)
+    SS_loo = SS_tot - (n_probes / (n_probes - 1)) \
+        * (per_probe_Z - Z_mean[None, :]) ** 2          # (P, n_t)
+    SS_loo = np.maximum(SS_loo, 0.0)                    # guard fp round-off
+    se_loo = np.sqrt(SS_loo / max(n_probes - 2, 1)) / math.sqrt(n_probes - 1)
     d_s_jack = np.full((n_probes, n_t), np.nan, dtype=np.float64)
     for p in range(n_probes):
-        idx = np.r_[0:p, p + 1:n_probes]
-        Zp = per_probe_Z[idx, :].mean(axis=0)
-        Zp_se = per_probe_Z[idx, :].std(axis=0, ddof=1) / math.sqrt(n_probes - 1)
+        Zp = (Z_total - per_probe_Z[p]) / (n_probes - 1)
+        Zp_se = se_loo[p]
         Zp_safe = np.where(Zp > 0, Zp, np.nan)
         Zp_relerr = Zp_se / np.maximum(np.abs(Zp), 1e-20)
         wp = np.where(np.isfinite(Zp_relerr) & (Zp_relerr > 0),
@@ -337,16 +347,21 @@ def run_flow_for_cell(k, T, lb, N, seed, n_probes, lanczos_m, mu_table,
                       half_window=10, ec=-1.0):
     """Build a graph at (k, T, lb, N, seed) the same way the worker does,
     then run SLQ and compute d_s(t). Returns FlowResult.
+
+    μ resolution mirrors the sweep exactly (disk_io.resolve_cell_mu): the μ
+    recorded in an existing meta sidecar for this (k,T,lb,N) wins, then any
+    N-qualified drift correction, then the base calibration — so a manual
+    rerun reproduces the sweep's graph rather than a subtly different one.
     """
-    key = mu_key(k, T, lb)
-    if key not in mu_table:
+    mu, mu_src = resolve_cell_mu(mu_table, k, T, lb, N, flow_dir=FLOW_DIR)
+    if mu is None:
         raise SystemExit(
-            f"no μ entry for {key} in {MU_JSON} — run the sweep's "
-            f"μ-calibration phase first, or pass --mu manually.")
-    mu = float(mu_table[key])
+            f"no μ entry for {mu_key(k, T, lb)} in {MU_JSON} — run the "
+            f"sweep's μ-calibration phase first, or pass --mu manually.")
 
     print(f"  [{time.strftime('%H:%M:%S')}] building graph "
-          f"k={k} T={T} lb={lb} N={N} seed={seed} μ={mu:.6f}",
+          f"k={k} T={T} lb={lb} N={N} seed={seed} μ={mu:.6f} "
+          f"(from {mu_src})",
           flush=True)
     eng, stats, sweeps, peak_deg = build_graph(
         N=N, k=k, T=T, lb=lb, mu=mu, ec=ec, seed=seed,
@@ -366,7 +381,7 @@ def run_flow_for_cell(k, T, lb, N, seed, n_probes, lanczos_m, mu_table,
           flush=True)
     t0 = time.time()
     per_probe, theta_all, omega_all = slq_per_probe_Z(
-        L_ip, L_id, L_dt, N_eff, lam_max_bound,
+        L_ip, L_id, L_dt, N_eff,
         n_probes, lanczos_m, t_grid, seed=seed * 1000 + 1, return_quad=True)
     print(f"    SLQ done in {time.time()-t0:.1f}s, computing flow...",
           flush=True)
@@ -643,7 +658,6 @@ def _render_svg(results, title, ds_min=None, ds_max=None):
         #                            bug fix: silent np.clip used to make
         #                            it look like a flat plateau.)
         xs = np.array([x_of(tt) for tt in t])
-        in_range = np.isfinite(d_mean) & (d_mean >= ds_min) & (d_mean <= ds_max)
         # ys for plotting: clip at axis edge but track whether each point
         # was clipped, for marker drawing.
         ys_plot = np.where(np.isfinite(d_mean),

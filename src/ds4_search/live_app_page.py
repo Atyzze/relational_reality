@@ -88,6 +88,11 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 <table id="cell-table"><thead></thead><tbody></tbody></table>
 <p style="font-size:11px;color:#666;margin-top:24px">
   Each row is one (k, T, lb, N, seed) cell. d_s is the spectral dimension.
+  <b>k̂</b> is the measured mean degree of the grown graph and <b>Δk = k̂ − k</b>
+  (target): <span style="color:#7ec96e">green</span> hit target,
+  <span style="color:#e5b06b">amber</span> mild drift,
+  <span style="color:#e5534b">red</span> off-target (mis-calibration or — at large
+  N — under-thermalisation), so a red row's d_s sits at a different degree than its label.
   Dashed grey curves are the reference lattices (tori). Page polls every 4s.
   <a href="__BASE_PATH__/api/csv" target="_blank">Download consolidated CSV →</a>
 </p>
@@ -263,14 +268,20 @@ function renderLiveBanner() {
   el.classList.toggle("stopped", !running);
   if (phase === "calibrating") {
     const n = (s.calibration && s.calibration.n_targets) || "?";
+    const ncal = (s.calibration && s.calibration.n_cal);
+    const atN = ncal ? ` at N=${ncal}` : "";
     el.innerHTML = `<b>Calibrating</b> &middot; computing μ for ${n} (k, T, lb) `
-      + `point(s) before the sweep starts — this can take a while.`
+      + `point(s)${atN} before the sweep starts — this can take a while.`
       + `<div class="progress-bar"><div class="fill" style="width:100%;`
       + `background:#e5b06b;opacity:0.4"></div></div>`;
   } else if (running) {
     const pct = s.n_total ? (100 * (s.n_done || 0) / s.n_total).toFixed(1) : 0;
+    const warn = s.eta_warning
+      ? `<div style="color:#e5b06b;margin-top:4px">&#9888; ${s.eta_warning}</div>`
+      : "";
     el.innerHTML = `<b>Sweep running</b> &middot; ${s.n_done||0}/${s.n_total||"?"} cells `
       + `(${pct}%) &middot; rate ${s.rate_per_min||"—"} cells/min &middot; ETA ${fmtSec(s.eta_sec)}`
+      + warn
       + `<div class="progress-bar"><div class="fill" style="width:${pct}%"></div></div>`;
   } else {
     el.innerHTML = `<b>Sweep not running</b> &middot; the grid is complete, or the worker is still spinning up. `
@@ -353,6 +364,7 @@ function renderLeaderboards() {
       `<div class="lb-row">k=${esc(c.k)} T=${esc(c.T)} lb=${esc(c.lb)} N=${esc(c.N)}: `
       + `<b>flat_σ=${(c.flatness_std||0).toFixed(3)}</b> `
       + `d_s med=${(c.ds_median||0).toFixed(2)} `
+      + (c.k_err != null ? `<span style="color:${deltaKColor(c.k_err)}" title="measured k̂=${(c.k_measured||0).toFixed(2)} vs target k=${esc(c.k)}">Δk=${fmtDeltaK(c.k_err)}</span> ` : "")
       + `<span style="color:${SHAPE_COLOR[c.shape]||'#888'}">(${esc(c.shape)})</span></div>`
     ).join("") : `<div style="color:#666">no cells in current selection</div>`;
   const groups = {};
@@ -609,7 +621,10 @@ function lbColor(t) {
 function renderTable() {
   const visible = applyFilters(DATA.cells || []);
   const cols = [
-    {k:"k", t:"k"}, {k:"T", t:"T"}, {k:"lb", t:"lb"}, {k:"N", t:"N"},
+    {k:"k", t:"k"},
+    {k:"k_measured", t:"k̂", num:true, fmt:v=>v==null?null:v.toFixed(2)},
+    {k:"k_err", t:"Δk", num:true, fmt:fmtDeltaK},
+    {k:"T", t:"T"}, {k:"lb", t:"lb"}, {k:"N", t:"N"},
     {k:"shape", t:"shape"},
     {k:"ds_median", t:"d_s med", num:true, fmt:v=>v?.toFixed(2)},
     {k:"flatness_std", t:"flat_σ", num:true, fmt:v=>v?.toFixed(3)},
@@ -638,7 +653,11 @@ function renderTable() {
     for (const c of cols) {
       const v = r[c.k];
       const display = (v == null) ? "—" : (c.fmt ? c.fmt(v) : esc(v));
-      const style = (c.k==="shape") ? `color:${SHAPE_COLOR[v]||'#888'}` : "";
+      const style =
+          (c.k==="shape")               ? `color:${SHAPE_COLOR[v]||'#888'}`
+        : (c.k==="k_err" && v!=null)     ? `color:${deltaKColor(v)}${Math.abs(v)>0.5?';font-weight:600':''}`
+        : (c.k==="k_measured")           ? "color:#aab"
+        : "";
       b += `<td class="${c.num?'num':''}" style="${style}">${display}</td>`;
     }
     b += "</tr>";
@@ -657,6 +676,20 @@ function setSort(k) {
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────
+// k̂ is the measured mean degree of the grown graph; Δk = k̂ − k(target).
+// |Δk| ≈ 0 means the cell hit the degree μ was calibrated to deliver; a
+// large |Δk| means the d_s curve was measured on a graph that missed its
+// target degree (mis-calibration, or — more often at big N — incomplete
+// thermalisation), so the row's (k,…) label overstates where it sits.
+function fmtDeltaK(v){ return v == null ? "—" : (v >= 0 ? "+" : "") + v.toFixed(2); }
+function deltaKColor(v){
+  if (v == null) return "#666";
+  const a = Math.abs(v);
+  if (a <= 0.10) return "#7ec96e";   // on-target
+  if (a <= 0.50) return "#e5b06b";   // mild drift
+  return "#e5534b";                  // off-target — worth investigating
+}
+
 function fmtSec(s) {
   if (s == null) return "—";
   if (s < 60) return s + "s";

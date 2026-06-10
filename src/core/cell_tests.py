@@ -85,8 +85,6 @@ Design notes
 
 import argparse
 import math
-import os
-import sys
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -103,16 +101,15 @@ from core.flow_probe import (
     build_lcc_laplacian, make_slq_t_grid,
     write_csv as write_flow_csv,
     write_html as write_flow_html,
-    write_quad_npz, _quad_dict,
-    PW, PH, ML, MR, MT, MB,
+    _quad_dict,
+    PW, ML, MR, MT, MB,
 )
 
 # Shared graph-build path with the rest of the project.
-from core.physics_engine import PhysicsEngine
 from metrics.numba_kernels import _build_laplacian_csr_jit
 from core.graph_builder import build_graph
-from core.project_constants import MAX_DEG, MU_JSON
-from core.disk_io import load_mu_table, mu_key
+from core.project_constants import MAX_DEG, MU_JSON, FLOW_DIR, MU_DRIFT_TOL
+from core.disk_io import load_mu_table, mu_key, resolve_cell_mu
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -144,30 +141,51 @@ class CellState:
     deg_hist: object = None      # np.ndarray: full-graph degree histogram
     sum_deg_sq: int = 0          # Σ d²  (the Hamiltonian degree term)
     therm_trace: object = None   # list of (sweep, k_avg, sum_deg_sq)
+    mu_used: object = None       # the μ this cell was actually grown with
+    therm_info: object = None    # equilibration verdict from build_graph
 
 
 def build_cell(k, T, lb, N, seed, mu_table, ec=-1.0):
     """Thermalise the graph at (k, T, lb, N, seed), extract LCC, build
-    sparse Laplacian. Returns a CellState consumed by the tests."""
-    key = mu_key(k, T, lb)
-    if key not in mu_table:
+    sparse Laplacian. Returns a CellState consumed by the tests.
+
+    μ resolution is N-aware (disk_io.resolve_cell_mu): a cell that already
+    has data at this exact (k, T, lb, N) reuses the μ recorded in its meta
+    sidecar — later seeds must match earlier ones — while a fresh rung picks
+    up any N-qualified drift correction, falling back to the base
+    calibration. The μ actually used is stashed on the CellState as
+    cell.mu_used so the meta writer records ground truth, not a re-lookup.
+    """
+    mu, mu_src = resolve_cell_mu(mu_table, k, T, lb, N, flow_dir=FLOW_DIR)
+    if mu is None:
         raise SystemExit(
-            f"no μ entry for {key} in {MU_JSON} — run the sweep's "
-            f"μ-calibration phase first.")
-    mu = float(mu_table[key])
+            f"no μ entry for {mu_key(k, T, lb)} in {MU_JSON} — run the "
+            f"sweep's μ-calibration phase first.")
 
     print(f"  [{time.strftime('%H:%M:%S')}] building graph "
-          f"k={k} T={T} lb={lb} N={N} seed={seed} μ={mu:.6f}",
+          f"k={k} T={T} lb={lb} N={N} seed={seed} μ={mu:.6f} "
+          f"(from {mu_src})",
           flush=True)
     eng, stats, sweeps, peak_deg = build_graph(
         N=N, k=k, T=T, lb=lb, mu=mu, ec=ec, seed=seed,
         max_deg=MAX_DEG, log_tag=None)
+    ti = getattr(eng, "therm_info", None)
     print(f"    therm sweeps={sweeps}, k_avg={stats.k_avg:.3f}, "
           f"edges={stats.edges}, lcc={stats.lcc_pct:.1f}%, "
-          f"k_top={peak_deg}",
+          f"k_top={peak_deg}"
+          + (f", equil-verified={ti['verified']}" if ti else ""),
           flush=True)
+    # Realised-k drift cross-check: warn loudly when the graph the sweep
+    # actually grew is meaningfully off its nominal k column.
+    err_pct = 100.0 * (stats.k_avg - k) / k
+    if abs(err_pct) > 100.0 * MU_DRIFT_TOL:
+        print(f"    ⚠ realised k̂={stats.k_avg:.3f} is {err_pct:+.1f}% off "
+              f"target k={k} (μ-vs-N drift — the sweep's drift audit will "
+              f"correct rungs that haven't started)", flush=True)
     cell = _build_cell_finalise(eng, stats, sweeps, peak_deg,
                                 k, T, lb, N, seed)
+    cell.mu_used = float(mu)
+    cell.therm_info = ti
     # Tier-1: full-graph degree histogram + Σd² + the equilibration trace
     # stashed on the engine by build_graph. Cheap, agnostic graph properties.
     deg = eng.node_degrees[:N].astype(np.int64)
@@ -230,7 +248,7 @@ def build_torus_cell(d, L, seed):
 
     label = f"torus {d}D L={L} N={N} s={seed}"
     print(f"    {d}D torus built, all nodes degree {max_deg}, "
-          f"BFS diameter = d·L/2 = {d*L//2}",
+          f"BFS diameter = d·⌊L/2⌋ = {d*(L//2)}",
           flush=True)
 
     # Reuse CellState: k=2d (coordination), T=0, lb=0 are the natural
@@ -282,7 +300,7 @@ def run_flow_test(cell: CellState, n_probes, lanczos_m, half_window):
     t0 = time.time()
     per_probe, theta_all, omega_all = slq_per_probe_Z(
         cell.L_indptr, cell.L_indices, cell.L_data,
-        cell.N_eff, cell.lam_max_bound,
+        cell.N_eff,
         n_probes, lanczos_m, t_grid, seed=cell.seed * 1000 + 1,
         return_quad=True)
     print(f"    [flow] SLQ done in {time.time()-t0:.1f}s, computing flow...",

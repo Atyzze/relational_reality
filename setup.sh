@@ -6,23 +6,10 @@
 #
 #   ./setup.sh
 #
-# Pass --no-run to only set up the environment without starting the app
-# (e.g. when you just want to refresh dependencies):
-#
-#   ./setup.sh --no-run
-#
 # Safe to re-run; it reuses the existing venv and just re-checks/updates.
 
 set -euo pipefail
 cd "$(dirname "$0")"
-
-RUN_AFTER=1
-for arg in "$@"; do
-    case "$arg" in
-        --no-run) RUN_AFTER=0 ;;
-        *) echo "Unknown option: $arg" >&2; exit 2 ;;
-    esac
-done
 
 PYTHON="${PYTHON:-python3}"
 
@@ -55,14 +42,8 @@ echo "==> Upgrading pip"
 echo "==> Installing dependencies from requirements.txt"
 "$VENV_PY" -m pip install -r requirements.txt
 
-if [ "$RUN_AFTER" -eq 1 ]; then
-    echo ""
-    echo "==> Setup complete — launching the dashboard now."
-    echo "    (opens in your browser and starts sweeping; press Ctrl-C to stop)"
-    echo ""
-    exec "$VENV_PY" main.py
-else
-    echo ""
-    echo "==> Setup complete. Start the project with:"
-    echo "      .venv/bin/python main.py"
-fi
+echo ""
+echo "==> Setup complete — launching the dashboard now."
+echo "    (opens in your browser and starts sweeping; press Ctrl-C to stop)"
+echo ""
+exec "$VENV_PY" main.py

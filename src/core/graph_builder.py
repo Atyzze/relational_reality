@@ -3,11 +3,12 @@ core/graph_builder.py — Graph build + μ calibration
 ==========================================
 build_graph runs adaptive thermalisation with p0's drift+noise
 criterion. calibrate_mu binary-searches the degree-penalty multiplier
-at small N so k_actual ≈ k. ensure_mu_calibrated parallelises the
-calibration sweep across the full (k, T, lb) grid.
+at small N so k_actual ≈ k. calibrate_missing parallelises the
+calibration sweep across an explicit list of (k, T, lb) cells.
 """
 
 import math
+import os
 import multiprocessing
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -17,13 +18,19 @@ import numpy as np
 from core.physics_engine import PhysicsEngine
 from metrics import get_graph_stats
 
+try:
+    from core import graph_store as _GRAPH_STORE   # optional persistent graph cache
+except Exception:                                  # pragma: no cover
+    _GRAPH_STORE = None
+
 from core.project_constants import (
-    K_ALL, T_ALL, LB_ALL, MAX_DEG, SEEDS,
+    MAX_DEG, SEEDS,
     MU_N_CAL, MU_LO, MU_HI, MU_TOL, MU_MAX_ITER,
     THERM_WINDOW, THERM_DRIFT_TOL, THERM_MIN_BASE, THERM_MAX_BASE,
-    THERM_CONFIRM, PROD_SWEEPS,
+    THERM_CONFIRM, PROD_SWEEPS, ENGINE_BACKEND,
 )
-from core.disk_io import _wlog, log, mu_key, load_mu_table, save_mu_table
+from core.disk_io import (_wlog, log, mu_key, mu_key_n, mu_lookup,
+                          load_mu_table, save_mu_table)
 
 
 def _mu_guess(k, T, lb, ec):
@@ -86,8 +93,12 @@ def _thermalise(eng, N, tmin, tmax, noise_tol, log_tag=None, trace_out=None):
     Both conditions must hold for THERM_CONFIRM consecutive sweeps to
     declare convergence; a single failure resets the confirm counter.
 
-    Returns the number of sweeps actually run. Engine state is mutated
-    in place; the caller reads eng.node_degrees, eng.peak_degree, etc.
+    Returns (sweeps, converged): the number of sweeps actually run and
+    whether the drift+noise criterion CONFIRMED — converged=False means
+    the loop ran out of budget (hit tmax) without ever confirming, which
+    the caller must surface rather than silently treating as equilibrated.
+    Engine state is mutated in place; the caller reads eng.node_degrees,
+    eng.peak_degree, etc.
 
     Pulled out of build_graph so the convergence criterion is testable
     without spinning up a real PhysicsEngine — tests can pass a fake
@@ -103,6 +114,7 @@ def _thermalise(eng, N, tmin, tmax, noise_tol, log_tag=None, trace_out=None):
     hist = []
     deg_confirms = 0
     sweeps = 0
+    converged = False
     # Trace cadence: at most ~120 points over the whole run, so the sidecar
     # stays tiny regardless of tmax.
     trace_every = max(1, tmax // 120)
@@ -147,15 +159,251 @@ def _thermalise(eng, N, tmin, tmax, noise_tol, log_tag=None, trace_out=None):
                 if deg_confirms >= THERM_CONFIRM:
                     if log_tag:
                         _wlog(log_tag, f"therm CONFIRMED at sw={sw}")
+                    converged = True
                     break
             else:
                 deg_confirms = 0
 
-    return sweeps
+    return sweeps, converged
+
+
+def _collect_series(eng, N, n_sweeps, sweep_offset=0, trace_out=None,
+                    trace_decim=1):
+    """Run `n_sweeps` more sweeps, sampling k_avg and q = Σd²/N EVERY sweep
+    (q is the degree-concentration term of the Hamiltonian — the structural
+    observable, which carries the slowest modes). Returns (sweeps, k, q) as
+    float arrays. A decimated copy goes to trace_out for the meta sidecar so
+    persisted traces stay small while the verdict uses full resolution."""
+    sw = np.empty(n_sweeps)
+    ks = np.empty(n_sweeps)
+    qs = np.empty(n_sweeps)
+    for i in range(n_sweeps):
+        eng.iterate(steps=N)
+        deg = eng.node_degrees[:N].astype(np.int64)
+        sw[i] = sweep_offset + i + 1
+        ks[i] = float(deg.mean())
+        qs[i] = float((deg * deg).sum()) / N
+        if trace_out is not None and (i % trace_decim == 0):
+            trace_out.append((int(sw[i]), ks[i], qs[i] * N))
+    return sw, ks, qs
+
+
+def _tau_int(x):
+    """Integrated autocorrelation time of a 1-D series, in sample units,
+    via Sokal's adaptive window (sum normalised autocorrelations until the
+    window exceeds 5·τ). Floored at 1 (white noise), capped at n/4 (beyond
+    that the series cannot resolve its own correlations)."""
+    x = np.asarray(x, dtype=float)
+    n = x.size
+    if n < 8:
+        return float(max(1, n // 4))
+    y = x - x.mean()
+    var = float(np.dot(y, y)) / n
+    if var <= 0:
+        return 1.0
+    tau = 1.0
+    for lag in range(1, n // 4):
+        rho = float(np.dot(y[:-lag], y[lag:])) / ((n - lag) * var)
+        tau += 2.0 * rho
+        if lag >= 5.0 * tau:
+            break
+    return float(min(max(tau, 1.0), n / 4.0))
+
+
+def _drift_verdict(sw, y, horizon_sweeps, abs_floor):
+    """Stationarity verdict for one observable series sampled per sweep.
+
+    1. OLS drift slope over the stretch; residual σ after detrending.
+    2. τ_int measured FROM THE RESIDUALS (not assumed): effective sample
+       size ESS = n/(2τ); the slope's standard error is inflated by √(2τ).
+    3. Significance z = slope/SE.
+    4. IMPACT = how far the fitted drift would carry the observable over
+       another HORIZON of evolution — the cell's own thermalisation scale
+       (≈ phase-1 sweeps), i.e. "would running it as long again change the
+       structure beyond its noise band?" — in units of that band:
+           impact = |slope|·horizon_sweeps / max(σ_resid, abs_floor)
+       (The production window itself is only PROD_SWEEPS≈3 sweeps — drift
+       across it is never the issue; a transient STRUCTURE is.)
+
+    verdict ∈ {True, False, None}:
+      • False  — drift is statistically DETECTED (|z| > 3) AND it matters
+                 (impact > 1): the structure moves by more than its noise
+                 band during the measurement. The real failure mode.
+      • True   — resolved and either no detectable drift or a drift too
+                 small to matter (impact ≤ 1; e.g. T=0 neutral-manifold
+                 wandering that never moves q beyond its band).
+      • None   — UNRESOLVED: τ so long the stretch can't decide
+                 (ESS < 8 or span < 6τ). Not a failure — a budget verdict.
+
+    Returns (verdict, stats_dict).
+    """
+    n = y.size
+    span = float(sw[-1] - sw[0]) if n > 1 else 0.0
+    if n < 8 or span <= 0:
+        return None, {"n": int(n), "reason": "too few samples"}
+    A = np.vstack([sw - sw.mean(), np.ones(n)]).T
+    coef, *_ = np.linalg.lstsq(A, y, rcond=None)
+    slope = float(coef[0])
+    resid = y - A @ coef
+    sigma = float(resid.std(ddof=1)) if n > 2 else 0.0
+    tau = _tau_int(resid)
+    ess = n / (2.0 * tau)
+    sxx = float(np.sum((sw - sw.mean()) ** 2))
+    se_slope = (sigma * math.sqrt(2.0 * tau) / math.sqrt(sxx)) if sxx > 0 else float("inf")
+    z = slope / se_slope if se_slope > 0 else 0.0
+    impact = abs(slope) * horizon_sweeps / max(sigma, abs_floor, 1e-300)
+    stats = {"n": int(n), "span": span, "tau": round(tau, 1),
+             "ess": round(ess, 1), "slope_per_ksweep": slope * 1000.0,
+             "z": round(float(z), 2), "impact": round(float(impact), 3)}
+    if ess < 8 or span < 6.0 * tau:
+        return None, stats
+    if abs(z) > 3.0 and impact > 1.0:
+        return False, stats
+    return True, stats
+
+
+def _verify_equilibration(eng, N, s0, noise_tol, log_tag=None,
+                          trace_out=None):
+    """Equilibration GUARANTEE, hard-capped at ~2-3× the phase-1 cost.
+
+    The drift+noise criterion in _thermalise watches mean degree, which can
+    settle before the structure does. This pass samples BOTH k_avg and
+    q = Σd²/N every sweep over a continuation block the length of phase-1
+    and applies _drift_verdict — a τ-aware drift-slope test with an impact
+    criterion — to each. τ is MEASURED from the residuals, never assumed:
+    a fixed-τ window comparison false-fails 70-80%% of the time on
+    perfectly stationary series whose slow modes have τ ~ 100-400 sweeps
+    (verified by simulation), which is precisely the regime of Σd² at
+    large N. The impact criterion additionally forgives real-but-harmless
+    motion (e.g. T=0 neutral-manifold wandering) that would never move the
+    observable beyond its own fluctuation band during the measurement.
+
+      block 1 (≈2× total): verdict on the block.
+      block 2 (≈3× total): only if block 1 said False or None — drift may
+              still be decaying, so block 2 ALONE gets the final word when
+              block 1 failed; the CONCATENATED series decides when block 1
+              was merely unresolved (more span resolves longer τ).
+
+    verified ∈ {True, False, None}; None means "could not resolve within
+    the ×3 budget" and is recorded as such — downstream gates reject only
+    explicit False, so unresolved cells stay usable but flagged.
+    """
+    block = max(s0, 400)
+    horizon = block                       # "as long again" — see _drift_verdict
+    decim = max(1, (2 * block) // 400)   # keep persisted traces ≤ ~400 rows
+
+    def _verdict_on(sw, ks, qs):
+        vk, sk = _drift_verdict(sw, ks, horizon, noise_tol)
+        vq, sq = _drift_verdict(sw, qs, horizon,
+                                0.005 * max(abs(float(np.median(qs))), 1e-12))
+        if vk is False or vq is False:
+            v = False
+        elif vk is None or vq is None:
+            v = None
+        else:
+            v = True
+        return v, {"k": sk, "q": sq}
+
+    sw1, k1, q1 = _collect_series(eng, N, block, sweep_offset=s0,
+                                  trace_out=trace_out, trace_decim=decim)
+    v, st = _verdict_on(sw1, k1, q1)
+    extra = block
+    blocks = 1
+    if v is not True:
+        first = (v, st)
+        sw2, k2, q2 = _collect_series(eng, N, block, sweep_offset=s0 + block,
+                                      trace_out=trace_out, trace_decim=decim)
+        extra += block
+        blocks = 2
+        if first[0] is False:
+            # drift was detected in block 1 — it may have been the tail of
+            # relaxation, so the LATER block alone gets the final word.
+            v, st = _verdict_on(sw2, k2, q2)
+            st["block1"] = first[1]
+        else:
+            # unresolved — more span is what resolves a long τ.
+            v, st = _verdict_on(np.concatenate([sw1, sw2]),
+                                np.concatenate([k1, k2]),
+                                np.concatenate([q1, q2]))
+    if log_tag:
+        _q = st.get("q", {})
+        _wlog(log_tag, f"equil-verify [{blocks} block(s)] -> "
+                       f"{ {True: 'PASS', False: 'DRIFT', None: 'UNRESOLVED'}[v] } "
+                       f"(q: tau={_q.get('tau')}, z={_q.get('z')}, "
+                       f"impact={_q.get('impact')})")
+    return {"verified": v, "blocks": blocks, "extra_sweeps": extra,
+            "detail": st}
+
+def _resolve_backend():
+    """Normalise ENGINE_BACKEND to the concrete native backend to *try*
+    (or 'numba'). 'auto' prefers the C++ engine."""
+    b = (ENGINE_BACKEND or "auto").lower()
+    if b == "auto":
+        return "cpp"
+    return b
+
+
+def ensure_engine_built(log=print):
+    """Build the selected native engine's shared library ONCE, up front, before
+    any worker pool forks — so the many parallel build_graph calls find it
+    already compiled and never race to build it. Idempotent and safe to call
+    from a single process; a no-op for the numba backend or if no compiler is
+    present (the sweep then runs on numba). Returns the backend that will
+    actually be used ('cpp'/'rust'/'numba')."""
+    want = _resolve_backend()
+    if want == "numba":
+        return "numba"
+    try:
+        from engines import get_engine
+        cls = get_engine(want)
+        if cls.ensure_available(log=log):
+            return cls.backend
+        log(f"[engines] {want} unavailable — the sweep will run on numba.")
+    except Exception as ex:                      # pragma: no cover
+        log(f"[engines] {want} build error ({type(ex).__name__}: {ex}) "
+            f"— the sweep will run on numba.")
+    return "numba"
+
+
+def _make_engine(N, T, lb, mu, ec, seed, max_deg, log_tag=None):
+    """Construct the graph-growth engine for the selected back-end and return
+    (engine_like, backend_name). The C++/Rust engines are wrapped in
+    _NativeEngineAdapter so build_graph drives them exactly like the numba
+    kernel; numba is returned raw (unchanged behaviour) and is the guaranteed
+    fallback whenever a native engine can't be built or constructed."""
+    want = _resolve_backend()
+
+    def _log(msg):
+        if log_tag:
+            _wlog(log_tag, msg)
+
+    if want != "numba":
+        try:
+            from engines import get_engine
+            cls = get_engine(want)
+            # ensure_available() is cheap once the .so exists (it is pre-built
+            # before any pool by ensure_engine_built); a single-process caller
+            # builds it here on first use.
+            if cls.ensure_available(log=(lambda *a: _log(" ".join(str(x) for x in a)))):
+                eng = cls(N, max_degree=max_deg, seed=seed,
+                          temperature=T, degree_penalty=mu,
+                          edge_cost=ec, locality_bias=lb)
+                _log(f"build_graph: using {cls.backend} engine")
+                return _NativeEngineAdapter(eng, N), cls.backend
+            _log(f"build_graph: {want} engine unavailable — using numba")
+        except Exception as ex:
+            _log(f"build_graph: {want} engine error "
+                 f"({type(ex).__name__}: {ex}) — using numba")
+
+    eng = PhysicsEngine(N, seed=seed, max_degree=max_deg,
+                        temperature=T, degree_penalty=mu,
+                        edge_cost=ec, locality_bias=lb)
+    return eng, "numba"
 
 
 def build_graph(N, k, T, lb, mu, ec, seed, max_deg=MAX_DEG,
-                tmax_override=None, log_tag=None):
+                tmax_override=None, log_tag=None, use_store=True,
+                verify_equil=True):
     """
     Build one thermalised graph at (N, k, T, lb, μ). Returns
     (eng, stats, sweeps_used, peak_degree).
@@ -164,20 +412,49 @@ def build_graph(N, k, T, lb, mu, ec, seed, max_deg=MAX_DEG,
     fit on a sliding window, noise via window std), with tmin/tmax
     scaled by 1/(1-lb) since high-locality mixing is slow.
 
+    When verify_equil is True (the default for production cells), the
+    drift+noise criterion is then VERIFIED by _verify_equilibration —
+    a block-comparison stationarity check on both k_avg and Σd²/N,
+    hard-capped at ~2-3× the phase-1 cost. The outcome is stashed on the
+    engine as eng.therm_info = {sweeps, converged, verified, blocks,
+    extra_sweeps, total_sweeps} so callers can persist it; cells with
+    verified=False must be flagged downstream, never silently trusted.
+    μ-calibration passes verify_equil=False — its throwaway trial builds
+    only need k_avg to settle, and tripling that phase would dominate
+    the sweep's startup cost.
+
     If log_tag is given, prints worker-side progress (every 60 s
     inside the thermalisation loop, plus phase-transition lines).
     μ-calibration passes log_tag=None to keep that phase quiet.
+
+    When use_store is True (and $GRAPH_STORE != "0"), the final graph is cached
+    via core.graph_store keyed by (k,T,lb,N,seed,mu,ec,max_deg): a matching cache
+    entry is loaded and returned without re-evolving, and a freshly built graph is
+    saved before returning. μ-calibration passes use_store=False so its many
+    throwaway trial-μ builds don't pollute the cache. stats are recomputed from the
+    loaded arrays (cheap, deterministic) rather than serialised.
     """
+    store_on = use_store and os.environ.get("GRAPH_STORE", "1") != "0" and _GRAPH_STORE is not None
+    if store_on:
+        cached = _GRAPH_STORE.load_graph(k, T, lb, N, seed, max_deg, mu=mu)
+        if cached is not None:
+            stats = get_graph_stats(cached.node_neighbors, cached.node_degrees)
+            sweeps = int(cached.meta.get("sweeps", 0))
+            peak_deg = int(cached.meta.get("peak_deg", cached.peak_degree))
+            # Restore the equilibration verdict recorded at build time, so a
+            # cache hit carries the same guarantee flags as a fresh build.
+            cached.therm_info = cached.meta.get("therm_info")
+            if log_tag:
+                _wlog(log_tag, f"build_graph: CACHE HIT {os.path.relpath(_GRAPH_STORE.path_for(k,T,lb,N,seed,max_deg))} "
+                               f"— skipped thermalisation (sweeps={sweeps}, k_avg={stats.k_avg:.3f})")
+            return cached, stats, sweeps, peak_deg
+
     if log_tag:
-        _wlog(log_tag, f"build_graph: allocating PhysicsEngine "
+        _wlog(log_tag, f"build_graph: allocating engine "
                        f"N={N} max_deg={max_deg}")
-    eng = PhysicsEngine(N, seed=seed, max_degree=max_deg)
+    eng, _engine_used = _make_engine(N, T, lb, mu, ec, seed, max_deg, log_tag)
     if log_tag:
-        _wlog(log_tag, "build_graph: PhysicsEngine constructed")
-    eng.temperature    = T
-    eng.edge_cost      = ec
-    eng.degree_penalty = mu
-    eng.locality_bias  = lb
+        _wlog(log_tag, f"build_graph: {_engine_used} engine constructed")
 
     egap = max(1.0 - lb, 0.001)
     scale = min(300.0, 1.0 / egap)
@@ -189,20 +466,39 @@ def build_graph(N, k, T, lb, mu, ec, seed, max_deg=MAX_DEG,
                        f"tmax={tmax} noise_tol={noise_tol:.5f}")
 
     therm_trace = []
-    sweeps = _thermalise(eng, N, tmin, tmax, noise_tol, log_tag=log_tag,
-                         trace_out=therm_trace)
+    sweeps, converged = _thermalise(eng, N, tmin, tmax, noise_tol,
+                                    log_tag=log_tag, trace_out=therm_trace)
+    if not converged and log_tag:
+        _wlog(log_tag, f"therm WARNING: drift+noise never confirmed within "
+                       f"tmax={tmax} sweeps — verification pass will decide")
+
+    # Equilibration guarantee: verify stationarity on BOTH k_avg and Σd²/N
+    # with consecutive-block comparison, capped at ~2-3× the phase-1 cost.
+    therm_info = {"sweeps": int(sweeps), "converged": bool(converged),
+                  "verified": None, "blocks": 0, "extra_sweeps": 0}
+    if verify_equil:
+        v = _verify_equilibration(eng, N, sweeps, noise_tol,
+                                  log_tag=log_tag, trace_out=therm_trace)
+        therm_info.update(verified=bool(v["verified"]),
+                          blocks=int(v["blocks"]),
+                          extra_sweeps=int(v["extra_sweeps"]),
+                          detail=v["detail"])
+    therm_info["total_sweeps"] = int(sweeps) + int(therm_info["extra_sweeps"])
 
     if log_tag:
-        _wlog(log_tag, f"therm done after {sweeps} sweeps  "
+        _wlog(log_tag, f"therm done after {therm_info['total_sweeps']} sweeps "
+                       f"(phase-1 {sweeps} + verify "
+                       f"{therm_info['extra_sweeps']})  "
                        f"→  {PROD_SWEEPS} production sweeps next")
     eng.iterate(steps=N * PROD_SWEEPS)
     # Final post-production equilibration sample, and stash the trace on the
     # engine so build_cell can persist it (keeps build_graph's return arity
     # unchanged — every existing caller still unpacks the same 4-tuple).
     _degf = eng.node_degrees[:N].astype(np.int64)
-    therm_trace.append((sweeps + PROD_SWEEPS,
+    therm_trace.append((therm_info["total_sweeps"] + PROD_SWEEPS,
                         float(_degf.mean()), float((_degf * _degf).sum())))
     eng.therm_trace = therm_trace
+    eng.therm_info = therm_info
     if log_tag:
         _wlog(log_tag, f"production sweeps done  →  computing graph stats  "
                        f"(k_top across run = {eng.peak_degree})")
@@ -211,6 +507,20 @@ def build_graph(N, k, T, lb, mu, ec, seed, max_deg=MAX_DEG,
         _wlog(log_tag,
               f"stats: edges={stats.edges} triangles={stats.triangles} "
               f"k_avg={stats.k_avg:.4f} lcc={stats.lcc_pct:.1f}%")
+    if store_on:
+        try:
+            _GRAPH_STORE.save_graph(
+                eng.node_neighbors, eng.node_degrees,
+                k=k, T=T, lb=lb, N=N, seed=seed, max_degree=max_deg,
+                mu=mu, ec=ec, sweeps=sweeps, peak_deg=eng.peak_degree,
+                therm_trace=getattr(eng, "therm_trace", None), k_avg=stats.k_avg,
+                engine=_engine_used,
+                therm_info=getattr(eng, "therm_info", None))
+            if log_tag:
+                _wlog(log_tag, "build_graph: cached final graph")
+        except Exception as ex:                 # caching is best-effort, never fatal
+            if log_tag:
+                _wlog(log_tag, f"build_graph: cache write skipped ({ex})")
     return eng, stats, sweeps, eng.peak_degree
 
 
@@ -238,7 +548,8 @@ def calibrate_mu(k, T, lb, ec, verbose=True):
         mu = guess if it == 0 else (lo + hi) / 2.0
         try:
             _, s, _, _ = build_graph(MU_N_CAL, k, T, lb, mu, ec,
-                                     seed=SEEDS[0], tmax_override=1500)
+                                     seed=SEEDS[0], tmax_override=1500,
+                                     use_store=False, verify_equil=False)
         except RuntimeError as e:
             if "max_degree" not in str(e):
                 raise
@@ -283,8 +594,8 @@ def calibrate_mu(k, T, lb, ec, verbose=True):
             hi = lo * 1.5
 
     if verbose:
-        log(f"    μ cal  k={k} T={T:.3f} lb={lb:.3f}: "
-            f"μ={best_mu:.5f}  k̃={best_k_avg:.3f}  "
+        log(f"    μ cal  k={k} T={T:.3f} lb={lb:.3f} N={MU_N_CAL}: "
+            f"μ={best_mu:.5f}  k̂={best_k_avg:.3f}  "
             f"μk={best_mu*k:.4f}  err={best_err:.4f}")
     return float(best_mu), float(best_err), float(best_k_avg)
 
@@ -296,48 +607,6 @@ def _calib_worker(args):
         return (k, T, lb, mu, err, k_avg, None)
     except Exception as e:
         return (k, T, lb, None, None, None, str(e)[:200])
-
-
-def ensure_mu_calibrated(ec, workers=None):
-    """Make sure every (k, T, lb) has a μ in mu_table.json. Runs in parallel."""
-    table = load_mu_table()
-    needed = []
-    for k in K_ALL:
-        for T in T_ALL:
-            for lb in LB_ALL:
-                if mu_key(k, T, lb) not in table:
-                    needed.append((k, T, lb, ec))
-    if not needed:
-        log(f"  μ table complete ({len(table)} entries)")
-        return table
-
-    log(f"  μ calibration: {len(needed)} missing, "
-        f"{len(table)} cached → running in parallel")
-    wk = min(workers or multiprocessing.cpu_count(), len(needed))
-
-    done_count = 0
-    t0 = time.time()
-    with ProcessPoolExecutor(max_workers=wk) as ex:
-        futs = {ex.submit(_calib_worker, a): a for a in needed}
-        for f in as_completed(futs):
-            k, T, lb, mu, err, k_avg, err_msg = f.result()
-            done_count += 1
-            if mu is None:
-                log(f"    ✗ μ cal failed k={k} T={T} lb={lb}: {err_msg}")
-                continue
-            table[mu_key(k, T, lb)] = mu
-            save_mu_table(table)
-            # Log line shows k̃ (the realised k_avg) alongside the
-            # error so an operator scanning a 1300-line cal log can
-            # immediately tell *which way* a misfit cell drifted —
-            # k̃<<k means μ over-suppressed degree, k̃>>k means μ
-            # too low and the graph saturated near max_deg. Pure
-            # `err` only gives magnitude, not direction.
-            log(f"    [{done_count:3d}/{len(needed)}] μ k={k} T={T:.3f} "
-                f"lb={lb:.3f} → {mu:.5f} k̃={k_avg:.3f} (err {err:.4f}) "
-                f"[{time.time()-t0:.0f}s total]")
-    log(f"  μ calibration done ({len(table)} entries)")
-    return table
 
 
 def calibrate_missing(targets, ec, workers=None, verbose=True):
@@ -367,11 +636,15 @@ def calibrate_missing(targets, ec, workers=None, verbose=True):
     so a Ctrl-C in the middle still leaves a valid (partial) table.
     """
     table = load_mu_table()
+    # Materialise once: `targets` may be a one-shot iterator, and we touch it
+    # both in the comprehension below and in the len() further down. Consuming
+    # it twice would make the count read 0 for a generator.
+    targets = list(targets)
     needed = [(k, T, lb, ec) for (k, T, lb) in targets
               if mu_key(k, T, lb) not in table]
     if not needed:
         if verbose:
-            log(f"  μ calibration: all {len(list(targets))} targets "
+            log(f"  μ calibration: all {len(targets)} targets "
                 f"already cached")
         return table, 0, 0, {}
 
@@ -399,9 +672,210 @@ def calibrate_missing(targets, ec, workers=None, verbose=True):
             save_mu_table(table)
             if verbose:
                 log(f"    [{n_done:3d}/{len(needed)}] μ k={k} T={T:.3f} "
-                    f"lb={lb:.3f} → {mu:.5f} k̃={k_avg:.3f} "
+                    f"lb={lb:.3f} N={MU_N_CAL} → {mu:.5f} k̂={k_avg:.3f} "
                     f"(err {err:.4f}) [{time.time()-t0:.0f}s total]")
     if verbose:
         log(f"  μ calibration done: {n_done} added, "
             f"{n_failed} failed, {len(table)} total entries")
     return table, n_done, n_failed, failures
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  μ-vs-N drift audit — measured for free from the sweep's own sidecars
+# ═══════════════════════════════════════════════════════════════════
+def mu_drift_report(flow_dir="flow"):
+    """Scan the meta sidecars and report realised-k drift per (k, T, lb, N).
+
+    Every completed cell already records the μ it was grown with and the
+    k_avg it realised, so the μ(N) map costs NOTHING beyond reading JSON.
+    Returns {(k, T, lb): {N: {"k_avg": mean over seeds, "mu": μ used,
+    "n_seeds": count, "err_pct": 100·(k_avg−k)/k}}}, sorted by N.
+    """
+    import glob as _glob
+    import json as _json
+    from collections import defaultdict
+    acc = defaultdict(lambda: defaultdict(lambda: {"k_avg": [], "mu": []}))
+    for p in _glob.glob(os.path.join(flow_dir, "meta_*.json")):
+        try:
+            with open(p) as fh:
+                m = _json.load(fh)
+        except (OSError, ValueError):
+            continue
+        if m.get("kind") != "cell":
+            continue
+        k_avg, mu = m.get("k_avg"), m.get("mu")
+        if k_avg is None or mu is None or mu != mu:
+            continue
+        cell = (int(m["k"]), float(m["T"]), float(m["lb"]))
+        acc[cell][int(m["N"])]["k_avg"].append(float(k_avg))
+        acc[cell][int(m["N"])]["mu"].append(float(mu))
+    report = {}
+    for cell, by_n in acc.items():
+        k_target = cell[0]
+        rows = {}
+        for N in sorted(by_n):
+            ks = by_n[N]["k_avg"]
+            mus = by_n[N]["mu"]
+            mean_k = float(np.mean(ks))
+            rows[N] = {
+                "k_avg": mean_k,
+                "mu": float(np.median(mus)),
+                "n_seeds": len(ks),
+                "err_pct": 100.0 * (mean_k - k_target) / k_target,
+            }
+        report[cell] = rows
+    return report
+
+
+def _load_pred_registry():
+    """Set of N-qualified keys whose table entries are PREDICTIONS (see
+    update_mu_table_n). Lives in MU_PRED_JSON next to mu_table.json."""
+    import json as _json
+    from core.project_constants import MU_PRED_JSON
+    try:
+        with open(MU_PRED_JSON) as fh:
+            return set(_json.load(fh).get("predicted_keys", []))
+    except (OSError, ValueError):
+        return set()
+
+
+def _save_pred_registry(keys):
+    import json as _json
+    from core.project_constants import MU_PRED_JSON
+    tmp = f"{MU_PRED_JSON}.tmp.{os.getpid()}"
+    try:
+        with open(tmp, "w") as fh:
+            _json.dump({"predicted_keys": sorted(keys),
+                        "saved_at": time.strftime("%Y-%m-%d %H:%M:%S")}, fh,
+                       indent=2)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, MU_PRED_JSON)
+    finally:
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+
+def update_mu_table_n(table, flow_dir="flow",
+                      drift_tol=None, min_seeds=None, target_Ns=None,
+                      log_fn=None):
+    """Derive N-qualified μ corrections AND predictions from the drift report
+    and merge them into `table` IN PLACE (the caller persists with
+    save_mu_table). NOTHING here builds a graph — every input is read from
+    sidecars of cells the sweep already ran, so the whole audit costs a JSON
+    scan.
+
+    Two phases:
+
+    MEASURED corrections — for each (k, T, lb) and each measured N where the
+    realised k_avg drifts from the target by more than drift_tol (relative)
+    with at least min_seeds seeds, store
+
+        table["k_T_lb@N"] = clip(μ_used × k_avg / k_target,
+                                 0.5·μ_used, 2.0·μ_used)
+
+    — the first-order Newton step on the empirical k·μ ≈ const relation (see
+    disk_io's module comment). Derived once per N, then PINNED (a measured
+    correction is never overwritten by a later audit or by a prediction).
+
+    PREDICTED entries — the point of the map: big rungs should START with an
+    accurate μ, not wait to measure their own drift. Every measured rung
+    yields the per-N ideal μ*(N) = μ_used(N)·k̂(N)/k regardless of which μ it
+    actually ran with; with ≥2 distinct measured N we fit μ*(N) = a + b·ln N
+    and extrapolate to each grid rung LARGER than the largest measured one
+    that has produced no data yet. Predictions are conservative — clipped to
+    [0.5, 2.0]× the largest-measured μ* — written only when they differ from
+    what mu_lookup would already return by more than drift_tol, and tracked
+    in MU_PRED_JSON so they REFRESH on every audit (the fit improves as rungs
+    complete) until their rung gains real data, at which point the measured
+    path takes over. Seed consistency is preserved throughout: a rung's first
+    seed records its μ in its sidecar and resolve_cell_mu makes every later
+    seed reuse it, so a mid-cell prediction refresh can never split a cell.
+
+    Cells that already have data at some N are never affected (resolve_cell_mu
+    reuses their recorded μ). Returns the list of keys added or refreshed.
+    drift_tol / min_seeds default to the [calibration] config values;
+    target_Ns defaults to the grid's N ladder.
+    """
+    from core.project_constants import (MU_DRIFT_TOL, MU_DRIFT_MIN_SEEDS,
+                                        MU_N_CORRECTION, N_ALL)
+    if not MU_N_CORRECTION:
+        return []
+    drift_tol = MU_DRIFT_TOL if drift_tol is None else drift_tol
+    min_seeds = MU_DRIFT_MIN_SEEDS if min_seeds is None else min_seeds
+    target_Ns = sorted(int(n) for n in (N_ALL if target_Ns is None
+                                        else target_Ns))
+    predicted = _load_pred_registry()
+    added = []
+    report = mu_drift_report(flow_dir)
+
+    # ── phase 1: measured corrections (pinned once derived) ────────────
+    for (k, T, lb), rows in report.items():
+        for N, r in rows.items():
+            if r["n_seeds"] < min_seeds:
+                continue
+            if abs(r["err_pct"]) / 100.0 <= drift_tol:
+                continue
+            key = mu_key_n(k, T, lb, N)
+            if key in table and key not in predicted:
+                continue           # measured pin — derived once, no feedback
+            mu_used = r["mu"]
+            corrected = mu_used * (r["k_avg"] / k)
+            corrected = min(max(corrected, 0.5 * mu_used), 2.0 * mu_used)
+            table[key] = float(corrected)
+            predicted.discard(key)   # measured now; stop refreshing it
+            added.append(key)
+            if log_fn:
+                log_fn(f"  μ-drift: k={k} T={T:g} lb={lb:g} at N={N:,} "
+                       f"realised k̂={r['k_avg']:.3f} "
+                       f"({r['err_pct']:+.1f}%) over {r['n_seeds']} seed(s) "
+                       f"→ μ {mu_used:.5f} → {corrected:.5f} (measured)")
+
+    # ── phase 2: predicted entries for dataless larger rungs ───────────
+    for (k, T, lb), rows in report.items():
+        pts = [(N, r) for N, r in rows.items() if r["n_seeds"] >= min_seeds]
+        if len({N for N, _ in pts}) < 2:
+            continue               # a trend needs ≥2 distinct measured N
+        # Per-N ideal μ*: what μ WOULD have hit k exactly at that N.
+        Ns = np.array([N for N, _ in pts], dtype=float)
+        mu_star = np.array([r["mu"] * (r["k_avg"] / k) for _, r in pts])
+        b, a = np.polyfit(np.log(Ns), mu_star, 1)     # μ* ≈ a + b·ln N
+        n_max = int(Ns.max())
+        anchor = float(mu_star[np.argmax(Ns)])        # μ* at largest measured N
+        for N in target_Ns:
+            if N <= n_max or N in rows:
+                continue           # only dataless rungs beyond the data
+            key = mu_key_n(k, T, lb, N)
+            if key in table and key not in predicted:
+                continue           # a measured pin exists — never overwrite
+            pred = a + b * math.log(N)
+            pred = min(max(pred, 0.5 * anchor), 2.0 * anchor)  # conservative
+            # Compare against what the lookup would return WITHOUT this key —
+            # i.e. the μ the rung would otherwise start with.
+            base, _bsrc = mu_lookup(
+                {kk: v for kk, v in table.items() if kk != key},
+                k, T, lb, N)
+            if base is None:
+                continue
+            if abs(pred - base) / base <= drift_tol:
+                # trend says no correction needed → drop a stale prediction
+                if key in predicted and key in table:
+                    del table[key]
+                    predicted.discard(key)
+                    added.append(key)
+                continue
+            if key in table and abs(table[key] - pred) < 1e-12:
+                continue           # unchanged — don't spam the log
+            table[key] = float(pred)
+            predicted.add(key)
+            added.append(key)
+            if log_fn:
+                log_fn(f"  μ-predict: k={k} T={T:g} lb={lb:g} → "
+                       f"μ({N:,}) ≈ {pred:.5f} extrapolated from "
+                       f"{len(pts)} measured rung(s) ≤ {n_max:,} "
+                       f"(refreshes until N={N:,} has data)")
+    _save_pred_registry(predicted)
+    return added

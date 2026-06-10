@@ -49,7 +49,6 @@ import re
 import subprocess
 import sys
 import time
-from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
@@ -83,58 +82,10 @@ STATS_HEADER = [
 ]
 
 
-def classify_shape(d_s_mean, in_window):
-    """Heuristic shape tag — must stay in sync with ds4_search.sweep_runner.
-
-    Note on 'flat': the tag means BOTH (a) no significant local
-    extrema AND (b) total variation small enough that the curve
-    actually sits at a single dimension. Without (b), a curve that
-    smoothly meanders between d=3 and d=5 would be mislabelled as
-    'flat' just because it has no peaks. We use std-of-d_s < 0.7
-    as the (b) criterion, matching the threshold below which
-    'flatness_std' starts to look genuinely meaningful in the
-    dashboard's leaderboard.
-    """
-    valid = in_window & np.isfinite(d_s_mean)
-    if valid.sum() < 8:
-        return "undetermined"
-    y = d_s_mean[valid].copy()
-    y_smooth = (np.convolve(y, np.ones(3) / 3, mode="valid")
-                if len(y) >= 5 else y)
-    n = len(y_smooth)
-    peaks_idx, troughs_idx = [], []
-    for i in range(1, n - 1):
-        if y_smooth[i] > y_smooth[i - 1] and y_smooth[i] > y_smooth[i + 1]:
-            peaks_idx.append(i)
-        if y_smooth[i] < y_smooth[i - 1] and y_smooth[i] < y_smooth[i + 1]:
-            troughs_idx.append(i)
-    span = float(y_smooth.max() - y_smooth.min())
-    std_y = float(np.std(y))
-    if span < 0.5 and std_y < 0.4:
-        return "flat"
-
-    def amp(idx):
-        l = max(idx - 1, 0); r = min(idx + 1, n - 1)
-        return min(abs(y_smooth[idx] - y_smooth[l]),
-                   abs(y_smooth[idx] - y_smooth[r]))
-    peaks = [i for i in peaks_idx if amp(i) >= 0.15]
-    troughs = [i for i in troughs_idx if amp(i) >= 0.15]
-    n_peaks = len(peaks); n_troughs = len(troughs)
-    net = float(y_smooth[-1] - y_smooth[0])
-    if n_peaks == 0 and n_troughs == 0:
-        if net >= 0.8: return "monotone_rising"
-        if net <= -0.8: return "monotone_falling"
-        # Featureless but non-zero variation: only call it "flat"
-        # if the std is genuinely small. Otherwise it's "wobble" —
-        # a meandering curve with no sharp features but real drift.
-        if std_y < 0.7:
-            return "flat"
-        return "wobble"
-    if n_peaks == 1 and n_troughs <= 1:
-        return "single_peak"
-    if n_peaks == 2:
-        return "double_peak"
-    return "bumpy"
+# Shape classifier: single source of truth in ds4_search/shape_classify.py,
+# shared with the sweep so the two can't drift apart (they previously kept
+# hand-synced copies). numpy is already imported above, so this is safe here.
+from ds4_search.shape_classify import classify_shape  # noqa: E402,F401
 
 
 def compute_stats(t, d_s_mean, in_window):
@@ -641,7 +592,7 @@ def main(argv=None):
     progress_info["loaded"] = len([r for r in all_rows
                                    if r.get("kind") == "cell"])
     if not all_rows and not progress_info["auto_sweep_spawned"]:
-        print(f"  no cells to render — exiting.", file=sys.stderr)
+        print("  no cells to render — exiting.", file=sys.stderr)
         return
     render_info = render_dashboard(all_rows, args.dir, args.out,
                                     args.status_json, progress_info)
@@ -658,40 +609,40 @@ def main(argv=None):
             # can't be found, that's the silent-empty-dashboard bug.
             # Surface it loudly.
             if render_info["n_dropped_missing"] > 0:
-                print(f"")
+                print("")
                 print(f"  ⚠ WARNING: {render_info['n_dropped_missing']} stats "
                       f"row(s) reference flow CSVs that don't exist on disk.")
-                print(f"    The dashboard will render WITHOUT those cells.")
-                print(f"    Sample missing paths:")
+                print("    The dashboard will render WITHOUT those cells.")
+                print("    Sample missing paths:")
                 for p in render_info["sample_missing_paths"]:
                     print(f"      {p}")
-                print(f"")
-                print(f"    Likely causes:")
+                print("")
+                print("    Likely causes:")
                 print(f"      1. The flow_*.csv files were deleted "
                       f"(check `ls {args.dir}/flow_*.csv`)")
-                print(f"      2. The stats CSV is from a different "
-                      f"working directory")
-                print(f"      3. The data was moved")
-                print(f"")
-                print(f"    Fixes:")
-                print(f"      • If files moved: re-run with --rescan to "
-                      f"rebuild stats from current location")
-                print(f"      • If files deleted: re-run sweep "
-                      f"(ds4_search/sweep_runner.py with same args, or dashboard "
-                      f"--auto-sweep) — cached cells will skip, missing "
-                      f"ones will recompute")
+                print("      2. The stats CSV is from a different "
+                      "working directory")
+                print("      3. The data was moved")
+                print("")
+                print("    Fixes:")
+                print("      • If files moved: re-run with --rescan to "
+                      "rebuild stats from current location")
+                print("      • If files deleted: re-run sweep "
+                      "(ds4_search/sweep_runner.py with same args, or dashboard "
+                      "--auto-sweep) — cached cells will skip, missing "
+                      "ones will recompute")
                 print(f"      • If sure paths are correct: "
                       f"`rm {args.stats_csv}` and re-run dashboard")
             if render_info["n_dropped_load_err"] > 0:
                 print(f"  ⚠ {render_info['n_dropped_load_err']} flow CSV(s) "
                       f"could not be parsed (corrupt?). Inspect manually.")
             if render_info["n_rendered_cells"] == 0 and len(cell_rows) > 0:
-                print(f"")
+                print("")
                 print(f"  ⚠ Dashboard will be EMPTY despite {len(cell_rows)} "
                       f"stats rows present — see warnings above.")
         else:
-            print(f"    (no data yet — sweep will populate as it runs; "
-                  f"refresh dashboard to see new cells)")
+            print("    (no data yet — sweep will populate as it runs; "
+                  "refresh dashboard to see new cells)")
 
     # 6. If we spawned a foreground sweep, wait for it. Ctrl-C
     #    propagates to the child via the shared process group, so
@@ -706,16 +657,16 @@ def main(argv=None):
             # Sweep child receives the same SIGINT via process group.
             # Give it a moment to finish writing its current state
             # (status JSON, current flow CSV) before we exit.
-            print(f"\n  Ctrl-C received — waiting for sweep to clean up...",
+            print("\n  Ctrl-C received — waiting for sweep to clean up...",
                   flush=True)
             try:
                 spawned_proc.wait(timeout=10)
             except subprocess.TimeoutExpired:
-                print(f"  sweep didn't exit in 10s, sending SIGTERM",
+                print("  sweep didn't exit in 10s, sending SIGTERM",
                       flush=True)
                 spawned_proc.terminate()
                 spawned_proc.wait(timeout=5)
-            print(f"  exited.")
+            print("  exited.")
             return
         rc = spawned_proc.returncode
         if rc == 0:

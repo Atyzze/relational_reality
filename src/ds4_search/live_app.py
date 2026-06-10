@@ -18,7 +18,7 @@ only way to stop it is Ctrl-C in the terminal, which tears down both the
 server and the sweep.
 
 This is normally launched via `python main.py` (no arguments); main.py reads
-the grid from config.toml and passes it here. It is not meant to be run
+the grid from main.toml and passes it here. It is not meant to be run
 directly with hand-typed grid args.
 """
 import argparse
@@ -183,16 +183,19 @@ class AppState:
         main_py = str(Path(__file__).resolve().parents[2] / "main.py")
         cmd = [
             sys.executable, "-u", main_py, "__sweep__",   # -u: line-buffered
-            "--k", self.args.k,
-            "--T", self.args.T,
-            "--lb", self.args.lb,
-            "--N", self.args.N,
         ]
-        # Multi-seed sweeps pass a seed *list*; single-seed (or an older
-        # caller) passes one --seed. Forward whichever we were given.
+        # Forward only the grid args we were actually given. The normal launch
+        # from main.py passes NONE of them, so the sweep backend reads the grid
+        # straight from main.toml — one source of truth, no marshalling here.
+        for flag, val in (("--k", self.args.k), ("--T", self.args.T),
+                          ("--lb", self.args.lb), ("--N", self.args.N)):
+            if val:
+                cmd += [flag, val]
+        # Multi-seed sweeps pass a seed *list*; a single seed is back-compat;
+        # neither given → the sweep backend uses main.toml's seeds.
         if getattr(self.args, "seeds", None):
             cmd += ["--seeds", self.args.seeds]
-        else:
+        elif self.args.seed is not None:
             cmd += ["--seed", str(self.args.seed)]
         cmd += [
             "--torus-d", self.args.torus_d,
@@ -253,6 +256,29 @@ class AppState:
 # ═══════════════════════════════════════════════════════════════════
 #  Data loading — read all flow_*.csv files in the dir
 # ═══════════════════════════════════════════════════════════════════
+def _meta_for_flow_csv(path):
+    """Best-effort read of the Tier-1 meta sidecar next to a flow CSV.
+
+    flow/flow_<tag>.csv -> flow/meta_<tag>.json (mirrors ds4_search/
+    sweep_runner.py:_sidecar_path). The sidecar carries the realised graph
+    properties the flow CSV does not — notably k_avg (measured mean degree),
+    k_min, k_max — so the dashboard can show measured-vs-target degree without
+    re-reading the graph. Returns {} when the sidecar is missing or unreadable
+    (older runs, a cell still in flight, a partial write): the caller treats an
+    absent measured-k as "—", so this never blocks a row from rendering.
+    """
+    d = os.path.dirname(path)
+    base = os.path.basename(path)
+    if base.startswith("flow_"):
+        base = "meta_" + base[len("flow_"):]
+    meta_path = os.path.join(d, base.rsplit(".", 1)[0] + ".json")
+    try:
+        with open(meta_path) as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
 def load_all_data(dir_):
     """Scan flow_*.csv in dir, return {cells: [...], toruses: [...]}.
 
@@ -260,6 +286,14 @@ def load_all_data(dir_):
     flow time series (t, d, in_window arrays), and per-cell summary
     stats. This is the structure that drives the dashboard plot,
     table, leaderboard, and consolidated CSV export.
+
+    Cells are additionally annotated from their meta sidecar with the
+    *measured* mean degree `k_measured` (the realised k̂ of the grown
+    graph), `k_min`/`k_max`, and `k_err = k_measured - k` (target). That
+    deviation is the calibration/thermalisation health signal: |k_err|
+    far from 0 means the graph the d_s curve was measured on did not hit
+    the degree it was supposed to, so the curve belongs to a different
+    point in (k, …) space than its label claims.
     """
     cells, toruses = [], []
     # Match ds4_search/static_dashboard.py: prefer flow/ subdir, fall back to top-level
@@ -294,6 +328,19 @@ def load_all_data(dir_):
         if kind == "cell":
             rec["shape"] = classify_shape(np.array(d),
                                           np.array(in_w, dtype=bool))
+            # Annotate measured degree from the meta sidecar (best-effort).
+            meta = _meta_for_flow_csv(path)
+            k_meas = meta.get("k_avg")
+            if isinstance(k_meas, (int, float)) and math.isfinite(k_meas):
+                rec["k_measured"] = float(k_meas)
+                target = fields.get("k")
+                if isinstance(target, (int, float)):
+                    rec["k_err"] = float(k_meas) - float(target)
+                km_min, km_max = meta.get("k_min"), meta.get("k_max")
+                if isinstance(km_min, (int, float)):
+                    rec["k_min"] = int(km_min)
+                if isinstance(km_max, (int, float)):
+                    rec["k_max"] = int(km_max)
             cells.append(rec)
         else:
             toruses.append(rec)
@@ -319,7 +366,11 @@ def compute_data_hash(data):
         key = (c.get("k"), c.get("T"), c.get("lb"), c.get("N"),
                c.get("seed"),
                round(c.get("ds_median") or 0, 4),
-               round(c.get("flatness_std") or 0, 4))
+               round(c.get("flatness_std") or 0, 4),
+               # measured degree lands in the meta sidecar, which may be
+               # written a beat after the flow CSV — fold it in so the table
+               # re-renders once k̂ becomes available, not only on the next cell.
+               round(c.get("k_measured") or 0, 3))
         keys.append(("cell",) + key)
     for t in data.get("toruses", []):
         key = (t.get("torus_dim"), t.get("torus_L"), t.get("seed"),
@@ -344,7 +395,8 @@ def write_consolidated_csv(data, out_path):
     sees a half-written file.
     """
     fields = ["kind", "k", "T", "lb", "N", "seed", "torus_dim",
-              "torus_L", "shape", "t_idx", "t", "d_s_mean", "in_window"]
+              "torus_L", "shape", "k_measured", "k_err",
+              "t_idx", "t", "d_s_mean", "in_window"]
     tmp = out_path + ".tmp"
     n_rows = 0
     with open(tmp, "w", newline="") as f:
@@ -360,6 +412,10 @@ def write_consolidated_csv(data, out_path):
                 "seed": cell.get("seed", ""),
                 "torus_dim": "", "torus_L": "",
                 "shape": cell.get("shape", ""),
+                "k_measured": ("" if cell.get("k_measured") is None
+                               else round(cell["k_measured"], 4)),
+                "k_err": ("" if cell.get("k_err") is None
+                          else round(cell["k_err"], 4)),
             }
             ts = cell.get("t", []) or []
             ds = cell.get("d", []) or []
@@ -550,18 +606,22 @@ def main(argv=None):
                          "There's no real authentication beyond a "
                          "per-launch CSRF token, so only bind 0.0.0.0 "
                          "on networks you trust.")
-    # Grid args — passed through to the spawned sweep worker.
-    ap.add_argument("--k", required=True,
-                    help="Comma-separated k values, e.g. '7,8,9,10,11'")
-    ap.add_argument("--T", required=True,
-                    help="Comma-separated T values, e.g. '0,0.005'")
-    ap.add_argument("--lb", required=True,
-                    help="Comma-separated lb values")
-    ap.add_argument("--N", required=True,
-                    help="Comma-separated N values")
-    ap.add_argument("--seed", type=int, default=42,
+    # Grid args — optional pass-through to the spawned sweep worker. When
+    # omitted (the normal launch from main.py), the sweep reads the grid from
+    # main.toml itself, so these need not be specified here.
+    ap.add_argument("--k", default=None,
+                    help="Comma-separated k values, e.g. '7,8,9,10,11' "
+                         "(omitted → main.toml [grid].k)")
+    ap.add_argument("--T", default=None,
+                    help="Comma-separated T values, e.g. '0,0.005' "
+                         "(omitted → main.toml [grid].T)")
+    ap.add_argument("--lb", default=None,
+                    help="Comma-separated lb values (omitted → main.toml [grid].lb)")
+    ap.add_argument("--N", default=None,
+                    help="Comma-separated N values (omitted → main.toml [grid].N)")
+    ap.add_argument("--seed", type=int, default=None,
                     help="Single base seed (back-compat). Ignored when "
-                         "--seeds is given.")
+                         "--seeds is given; omitted → main.toml [grid] seeds.")
     ap.add_argument("--seeds", default=None,
                     help="Comma-separated seeds to run per cell "
                          "(e.g. '42,43,44,45,46'). Forwarded to the sweep; "
@@ -616,8 +676,11 @@ def main(argv=None):
                   file=sys.stderr)
             print(f"  to free it:   fuser -k {args.port}/tcp",
                   file=sys.stderr)
-            print(f"  or pick another port:   python main.py "
-                  f"--port {args.port + 1}", file=sys.stderr)
+            print(f"  or pick another port: set  port = {args.port + 1}  "
+                  f"under [server] in main.toml", file=sys.stderr)
+            print("  (or  port = 0  to let the OS pick any free port "
+                  "automatically — the chosen URL is printed at startup)",
+                  file=sys.stderr)
             sys.exit(98)
         raise
 
@@ -634,14 +697,14 @@ def main(argv=None):
     print(f"  data dir: {args.dir}")
     print(f"  open in browser: {public_url}")
     if args.host in ("127.0.0.1", "localhost"):
-        print(f"  binding: localhost-only (other machines cannot reach)")
+        print("  binding: localhost-only (other machines cannot reach)")
     else:
         print(f"  ⚠ binding: {args.host} — reachable from your network "
               f"(read-only reporting page; no authentication).")
-    print(f"  Ctrl-C to stop the server and the sweep")
+    print("  Ctrl-C to stop the server and the sweep")
 
     if args.auto_start:
-        print(f"  --auto-start: starting sweep now")
+        print("  --auto-start: starting sweep now")
         state.start_sweep()
 
     # Funnel SIGTERM (e.g. `kill <pid>`, a service manager, an IDE stop

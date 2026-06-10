@@ -1,0 +1,196 @@
+# main.toml — the sweep grid you can edit
+# ==========================================
+# This is the one file to touch to change *what* gets swept: the parameter
+# ranges the search explores. Everything else (physics constants, probe
+# settings, file layout) is internal and lives in src/core/project_constants.py.
+#
+# Just run:  python main.py
+# It opens the live dashboard and starts sweeping this grid automatically,
+# resuming wherever a previous run left off (already-computed cells are skipped).
+#
+# Each combination of (k, T, lb, N) at the seed below is one "cell": one graph
+# grown from the Hamiltonian, on which the spectral dimension d_s(t) is
+# measured. The actual sweep is the full cross-product of these lists.
+#
+# This copy has: T set to the geometric grid you've been running
+# ([0, 0.001, 0.004, 0.016, 0.064]); an N ladder that still lists rungs far
+# past what most machines can run (see the note by N — trim it to your
+# hardware before launching); and [dashboard] + [compute] + [server] tables at
+# the BOTTOM (plot-redraw cadence, worker count, memory headroom, where the
+# dashboard binds). If you'd rather not disturb your live grid, just copy those
+# blocks into your existing main.toml — the code falls back to defaults if
+# they're absent, so all of them are optional.
+
+[grid]
+
+# k : mean target degree of the grown graph — the connectivity knob.
+# (Engine cap MAX_DEG is derived as 2*max(k), so the densest sweepable
+# regime follows whatever you list here.)
+k = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
+
+# T : temperature of the graph-growth Monte-Carlo.
+# T=0 is the cold ground state (no thermal noise); higher T adds disorder.
+T = [0, 0.001, 0.004, 0.016, 0.064]
+
+# lb : locality bias — the main dial of the d_s->4 search.
+# How strongly edges prefer to stay local.
+lb = [0,0.5,0.90,0.95,0.99,0.995,0.999]
+
+# N : number of nodes in the graph — the finite-size ladder.
+# Spectral dimension is read off as N grows, so the same (k, T, lb) is measured
+# at several N to see the large-graph limit.
+N = [1_000, 4_000, 16_000, 64_000, 256_000, 1_024_000, 4_096_000, 16_384_000, 65_536_000, 262_144_000, 1_048_576_000]
+# NOTE: the largest N dominate runtime and memory (node_neighbors alone is
+# N · MAX_DEG · 4 bytes per worker — ~425 MB/worker at N=4_096_000, with
+# MAX_DEG = 2·max(k) = 26 for this grid). This ladder still lists rungs up to
+# 1_048_576_000 (~100 GB/worker), which is infeasible on all but very large
+# machines — trim N to the largest size your hardware can actually hold before
+# launching, or the big rungs will be OOM-killed mid-sweep (the [compute]
+# min_free_gb guard will pause them, but it can't make RAM you don't have).
+
+# seed : base RNG seed for graph growth.
+# n_seeds : how many seeds to run per (k, T, ℓ, N) cell. The sweep runs
+#   seeds  seed, seed+1, …, seed+n_seeds-1  for every cell, so you can see
+#   the graph-to-graph spread of d_s, not just one draw. Each seed writes
+#   its own flow_*.csv (the filenames carry _s<seed>), and the heatmap
+#   averages d_s over the seeds present per cell while also reporting the
+#   seed-to-seed std.
+#
+# n_seeds = 5 is the default. More seeds = more confidence in each cell but
+# linearly more compute (the cost lands hardest on the large-N cells). If a
+# full multi-seed sweep over the whole grid is too slow, the intended way to
+# go faster is to NARROW the grid above (fewer k / ℓ / T / N values, e.g. a
+# single N or a focused ℓ band) rather than to drop seeds — small-N cells are
+# cheap and that is exactly where the seed spread is largest and most useful.
+# Set n_seeds = 1 to recover the old single-seed behaviour.
+seed = 42
+n_seeds = 5
+
+
+# ── dashboard / plotting ────────────────────────────────────────────────
+# Runtime knobs for the live output. Not part of the sweep grid above.
+[dashboard]
+
+# redraw_interval_s : force the heatmaps and shape plots to redraw at least
+# this often (in seconds) while the sweep is running, EVEN IF no new cell has
+# finished. This is what makes config/marker changes and newly-flagged cells
+# show up promptly instead of waiting for the next (possibly very slow,
+# high-N) cell to land. Set to 0 to disable the periodic redraw — plots then
+# refresh only when a cell completes (the original behaviour).
+redraw_interval_s = 10
+
+# flow_refresh_interval_s : the value/flatness/seed-std heatmaps and the
+# flow-mode maps refresh on every finished cell. The heavier N->infinity
+# *convergence* pass (per-cell plateau extrapolation in src/flow_convergence.py)
+# and its leaderboard charts (src/flow_charts.py) are only meaningful once a
+# cell has several N, and cost more, so they refresh on this slower cadence
+# instead — at most once per this many seconds. 0 = refresh them every time
+# (heaviest); a negative value disables the automatic convergence/charts pass.
+flow_refresh_interval_s = 10
+
+
+# ── compute / resources ─────────────────────────────────────────────────
+# How much of the machine the sweep is allowed to use.
+[compute]
+
+# workers : number of parallel worker processes (one cell per worker at a
+# time). 0 = auto = every logical core the OS grants us (e.g. 32 on a
+# 16-core / 32-thread CPU). Each worker is single-threaded (BLAS and numba
+# are both pinned to 1 thread per worker), so this number IS the parallelism.
+#
+# Lower it to cap CPU/power use. These graph + heat-kernel calcs are
+# largely memory- and cache-bound, and all cores share the same RAM bandwidth
+# and per-CCD L3, so beyond a point MORE workers stop adding throughput (they
+# just contend) — running at the PHYSICAL core count, or fewer, is often just
+# as fast while drawing less power and leaving the machine usable. Find your
+# sweet spot by timing a fixed cell at a few values; the --workers CLI flag
+# overrides this for quick experiments. To find the sweet spot automatically,
+# run the standalone tuner — it benchmarks 1, 4, 8, … up to all cores on a
+# fixed 256k cell, prints a per-core-efficiency table, and writes the best
+# value here for you:   python src/physics_tests/optimal_workers.py
+workers = 0
+
+# min_free_gb : memory safety margin. Before starting another cell the sweep
+# estimates its memory need (from the measured RSS of earlier cells vs N) and
+# PAUSES — letting running cells finish first — rather than start one that
+# would drop free memory below this. This keeps the OS OOM-killer from killing
+# the run and losing the big in-flight cells; under pressure the sweep simply
+# runs fewer cells at once (auto-throttling down). 0 disables the guard.
+min_free_gb = 4
+
+# ═══════════════════════════════════════════════════════════════════
+# How the per-(k,T,lb) degree-penalty μ is fitted before the sweep runs.
+[calibration]
+
+# n_cal : graph size (number of nodes N) used while binary-searching μ so
+# that the realised average degree k̂ matches the target k. This is ONLY the
+# size of the throwaway graphs built during calibration — it does NOT change
+# the N your sweep actually runs (that is [grid].N).
+#
+# Why raise it: the measured k̂ carries a finite-size bias — at small N the
+# average degree a given μ yields drifts slightly from its large-N limit, so
+# the μ written to mu_table.json is fit against a marginally-off target. A
+# larger n_cal shrinks that bias, giving a μ that transfers more faithfully
+# to big-N production cells. Cost is time: each trial graph is O(n_cal) to
+# thermalise and the search builds ~10-25 per cell, so doubling n_cal roughly
+# doubles the (parallel) calibration phase. 4000 is a sane default; 8000-16000
+# is worth a try if production N is large and low-lb / high-k cells look
+# off-target. NOTE: this will NOT fix under-thermalised sweep cells (k_avg far
+# below target) — that is a thermalisation/lb issue, not a calibration-N one.
+n_cal = 4000
+
+# μ-vs-N drift correction. The sweep audits realised k̂ against the target k
+# from the meta sidecars it has already written (free — no extra builds) and,
+# where the relative drift at some N exceeds drift_tol with at least
+# drift_min_seeds seeds measured, stores a first-order corrected μ under an
+# N-qualified key ("k_T_lb@N" in mu_table.json, μ′ = μ·k̂/k, clipped to
+# [0.5μ, 2μ], derived once per N then pinned). Corrections apply ONLY to N
+# rungs that have produced no data yet — cells with existing seeds keep the
+# μ recorded in their own sidecar, so seeds within one cell never mix μ.
+# With ≥2 measured rungs the audit also EXTRAPOLATES the ideal-μ trend to
+# the larger grid rungs that have no data yet (linear in ln N, clipped to
+# [0.5, 2]x the largest measured value, tracked in mu_predictions.json and
+# refreshed as rungs complete) — so the expensive big-N rungs start with an
+# accurately estimated μ rather than measuring their own drift first. No
+# graph is ever rebuilt for any of this; the audit only reads sidecars.
+drift_tol       = 0.02   # relative |k̂−k| that triggers a correction/prediction
+drift_min_seeds = 2      # seeds required at an N before its drift is trusted
+n_correction    = true   # false = freeze the table; the audit still warns
+
+
+# ── dashboard server ────────────────────────────────────────────────────
+# Where the live dashboard binds. Optional — absent table → the localhost
+# defaults below. There are no command-line flags for these; main.toml is the
+# single place anything is configured.
+[server]
+
+# host : bind address. "127.0.0.1" (default) is localhost-only. Set to
+# "0.0.0.0" to expose the page on your network — it is read-only but
+# unauthenticated, so only do that on networks you trust.
+host = "127.0.0.1"
+
+# port : HTTP port for the dashboard (default 8000). Set to 0 to let the OS
+# pick any free port (the chosen URL is printed at startup).
+port = 8000
+
+# open_browser : auto-open a browser tab to the dashboard on launch (default
+# true). Set false on headless boxes — the URL is still printed.
+open_browser = true
+
+
+# ── graph-growth engine ─────────────────────────────────────────────────
+# Which Metropolis kernel evolves the graphs. Optional — absent → "auto".
+[engine]
+
+# backend : "auto" (default) prefers the native C++ engine, compiling it on
+#   first use and falling back to numba if there's no compiler; "cpp" / "rust"
+#   force a native engine (still falling back to numba if it can't be built);
+#   "numba" is the pure-Python/numba reference kernel that always works.
+# All back-ends implement the same Hamiltonian and produce statistically
+# equivalent graphs (they use different RNGs, so a given seed yields a
+# different—but equivalent—draw per back-end). The C++ engine is markedly
+# faster on the large-N rungs; numba needs no compiler. NOTE: cached graphs in
+# output/graphs/ are reused regardless of which engine grew them (each cache
+# entry records its engine in the sidecar meta) — delete that directory if you
+# want a dataset grown entirely by one back-end.
+backend = "auto"

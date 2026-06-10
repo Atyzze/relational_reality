@@ -1,72 +1,47 @@
 """
 core/disk_io.py — JSON / log / worker-side logging helpers
 ==========================================================
-Stateless except for the open log file handle. Imports stdlib +
-core.project_constants (for filenames). Provides the orchestrator log,
-worker-side RSS-traced logging, and the JSON-backed μ table.
+Stateless. Imports stdlib + core.project_constants (for filenames).
+Provides the orchestrator log, worker-side RSS-traced logging, and the
+JSON-backed μ table.
 """
 
 import json
 import os
 import sys
 import time
-from threading import Event, Thread
 
-from core.project_constants import LOG_FILE, MU_JSON, DATA_DIR
-
-
-def _ensure_data_dir():
-    """Make the output data dir on first need. Idempotent — cheap to call
-    repeatedly. Centralised here so every writer (log, CSV, μ table,
-    heartbeat files) goes through the same guarantee, instead of each
-    path-using helper calling makedirs in its own way.
-    """
-    os.makedirs(DATA_DIR, exist_ok=True)
+from core.project_constants import MU_JSON
 
 
 # ═══════════════════════════════════════════════════════════════════
-#  Orchestrator-side log (LOG_FILE + stdout)
+#  Orchestrator-side log (stdout)
 # ═══════════════════════════════════════════════════════════════════
-_LOG_FH = None
-
-
 def log(msg, end="\n"):
-    """Print to stdout and append to LOG_FILE with an ISO-format
-    timestamp.  The format `YYYY-MM-DD HH:MM:SS` matches the dashboard's
-    rendered "updated" stamp so log lines and dashboard state line up
-    visually, AND it disambiguates day boundaries on multi-day sweeps —
-    `[00:55:50]` was useless on a 4-day run because you couldn't tell
-    which day a given line belonged to.  The CSV's t_start/t_end
-    columns remain the canonical absolute-time source (epoch float
-    seconds, sub-second precision); these log timestamps are the
-    human-readable companion."""
+    """Print to stdout with an ISO-format timestamp.  The format
+    `YYYY-MM-DD HH:MM:SS` matches the dashboard's rendered "updated"
+    stamp so log lines and dashboard state line up visually, AND it
+    disambiguates day boundaries on multi-day sweeps — `[00:55:50]` was
+    useless on a 4-day run because you couldn't tell which day a given
+    line belonged to.  The CSV's t_start/t_end columns remain the
+    canonical absolute-time source (epoch float seconds, sub-second
+    precision); these log timestamps are the human-readable companion.
+
+    The live dashboard captures this stdout stream into its in-memory
+    heartbeat ring, which is the project's actual log surface; there is
+    no separate on-disk logfile."""
     t = time.strftime("%Y-%m-%d %H:%M:%S")
-    line = f"[{t}] {msg}"
-    print(line, end=end, flush=True)
-    global _LOG_FH
-    if _LOG_FH is not None:
-        try:
-            _LOG_FH.write(line + end)
-            _LOG_FH.flush()
-        except Exception:
-            pass
-
-
-def open_log():
-    global _LOG_FH
-    if _LOG_FH is None:
-        _ensure_data_dir()
-        _LOG_FH = open(LOG_FILE, "a", buffering=1)
+    print(f"[{t}] {msg}", end=end, flush=True)
 
 
 # ═══════════════════════════════════════════════════════════════════
 #  Worker-side logging (memory-trace instrumentation)
 # ═══════════════════════════════════════════════════════════════════
 # These run inside worker processes, so they print directly to stdout
-# (the parent terminal) rather than through log() — that would race on
-# the LOG_FILE handle. Every line carries the worker PID and current
-# RSS so per-worker memory growth is trivially grep-able:
-#     grep 'pid=12345' sweep.log
+# (the parent terminal, captured by the live dashboard's heartbeat ring).
+# Every line carries the worker PID and current RSS so per-worker memory
+# growth is trivially grep-able from captured output:
+#     ... | grep 'pid=12345'
 def _rss_mb():
     """Resident-set size in MB for the current process. Linux-only;
     -1 elsewhere."""
@@ -92,52 +67,6 @@ def _wlog(tag, msg):
     sys.stdout.flush()
 
 
-def _start_heartbeat(tag, interval_s=60, sample_s=5):
-    """Daemon thread: log RSS + current phase every interval_s seconds,
-    AND sample RSS every sample_s seconds to track the peak. Returns
-    (stop_fn, phase_ref, peak_rss_ref). Mutate phase_ref[0] on phase
-    changes so the heartbeat reflects what the worker is currently
-    doing. peak_rss_ref[0] always holds the highest RSS observed since
-    the heartbeat started.
-
-    Initial sample is taken eagerly BEFORE the first stop.wait(sample_s)
-    blocks. Without this, jobs that finish in less than sample_s never
-    record any RSS reading and write rss_peak_mb=0 to the CSV — which
-    the dashboard's memory panel correctly filters out as no-data,
-    making small-N rows invisible in the per-N peak-RSS view. Tiny
-    cells (N≤1k) routinely finish in <5s, so the bug was systematic
-    rather than rare.
-    """
-    stop = Event()
-    phase = ["init"]
-    peak_rss = [0]
-
-    # Eager initial sample — guarantees rss_peak_mb is non-zero even
-    # for sub-sample_s jobs. The loop below picks up subsequent peaks
-    # on the regular cadence.
-    rss0 = _rss_mb()
-    if rss0 > peak_rss[0]:
-        peak_rss[0] = rss0
-
-    def loop():
-        last_log = time.time()
-        # Sample more frequently than we log so we catch transient RSS
-        # spikes between phase boundaries (e.g. mid-SLQ tracelet
-        # allocations) that minute-grained heartbeats would miss.
-        while not stop.wait(sample_s):
-            rss = _rss_mb()
-            if rss > peak_rss[0]:
-                peak_rss[0] = rss
-            now = time.time()
-            if now - last_log >= interval_s:
-                _wlog(tag, f"♥ heartbeat — phase=[{phase[0]}] "
-                           f"peak_rss={peak_rss[0]}MB")
-                last_log = now
-
-    Thread(target=loop, daemon=True).start()
-    return stop.set, phase, peak_rss
-
-
 # ═══════════════════════════════════════════════════════════════════
 #  μ table — JSON-backed (k, T, lb) → μ cache
 # ═══════════════════════════════════════════════════════════════════
@@ -152,14 +81,108 @@ def load_mu_table():
 
 
 def save_mu_table(table):
+    # Atomic write (tmp + fsync + os.replace), same guarantee the flow CSV
+    # and the sidecars use: a crash mid-write must never leave a truncated
+    # mu_table.json, since a corrupt table would poison every subsequent
+    # resume. os.replace is atomic on POSIX, so the final path only ever
+    # appears complete — a killed writer leaves at most a stray .tmp.
     parent = os.path.dirname(MU_JSON)
     if parent:
         os.makedirs(parent, exist_ok=True)
-    with open(MU_JSON, "w") as f:
-        json.dump({"mu_table": table,
-                   "saved_at": time.strftime("%Y-%m-%d %H:%M:%S")},
-                  f, indent=2)
+    tmp = f"{MU_JSON}.tmp.{os.getpid()}"
+    try:
+        with open(tmp, "w") as f:
+            json.dump({"mu_table": table,
+                       "saved_at": time.strftime("%Y-%m-%d %H:%M:%S")},
+                      f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, MU_JSON)
+    finally:
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
 
 
 def mu_key(k, T, lb):
     return f"{int(k)}_{float(T)}_{float(lb)}"
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  N-aware μ — the μ-vs-N map
+# ═══════════════════════════════════════════════════════════════════
+# μ is calibrated at N=MU_N_CAL (small, cheap). The realised k_avg can drift
+# from the target k as N grows. Rather than re-running the (expensive) binary
+# search at every N, the sweep measures the drift FOR FREE from the cells it
+# has already built (every meta sidecar records k_avg and the μ used) and
+# stores first-order Newton corrections under N-qualified keys:
+#
+#     "<k>_<T>_<lb>@<N>"  →  μ corrected for rungs of size ≥ N
+#
+# The correction uses the empirical near-hyperbola k·μ ≈ const (see
+# graph_builder._mu_guess: μ ≈ C/k in every regime), so to move a realised
+# k_avg back onto the target k the multiplicative update is
+#
+#     μ_corrected = μ_used × (k_avg / k_target)
+#
+# (denser than wanted ⇒ k_avg > k ⇒ raise the penalty, and vice versa).
+# mu_lookup resolves a cell's μ as: exact @N key → largest @N' key with
+# N' ≤ N → the base (k,T,lb) key. Corrections are only ever derived from
+# completed data and only applied to rungs that have produced none yet
+# (resolve_cell_mu prefers the μ recorded in an existing sidecar), so seeds
+# within one (k,T,lb,N) cell can never mix different μ values.
+
+def mu_key_n(k, T, lb, N):
+    return f"{mu_key(k, T, lb)}@{int(N)}"
+
+
+def mu_lookup(table, k, T, lb, N):
+    """Resolve μ for a cell at size N: exact N-qualified entry, else the
+    entry for the largest qualified N' ≤ N, else the base calibration.
+    Returns (mu, key_used) or (None, None) when no entry exists at all."""
+    base = mu_key(k, T, lb)
+    exact = mu_key_n(k, T, lb, N)
+    if exact in table:
+        return float(table[exact]), exact
+    best_n, best_key = -1, None
+    prefix = base + "@"
+    for key in table:
+        if key.startswith(prefix):
+            try:
+                n = int(key[len(prefix):])
+            except ValueError:
+                continue
+            if best_n < n <= int(N):
+                best_n, best_key = n, key
+    if best_key is not None:
+        return float(table[best_key]), best_key
+    if base in table:
+        return float(table[base]), base
+    return None, None
+
+
+def resolve_cell_mu(table, k, T, lb, N, flow_dir="flow"):
+    """μ for ONE cell (k,T,lb,N), with seed consistency: if any seed of this
+    cell already wrote a meta sidecar, reuse the μ recorded there — later
+    seeds of the same cell must be grown with the SAME μ as the earlier ones,
+    even if a drift correction has landed in the table since. Only a cell
+    with no data yet picks up corrections via mu_lookup.
+
+    Returns (mu, source) where source is 'meta', a table key, or None."""
+    import glob as _glob
+    pat = os.path.join(flow_dir,
+                       f"meta_k{int(k)}_T{float(T)}_lb{float(lb)}"
+                       f"_N{int(N)}_s*.json")
+    for p in sorted(_glob.glob(pat)):
+        try:
+            with open(p) as fh:
+                m = json.load(fh)
+            mu = m.get("mu")
+            if mu is not None and mu == mu:        # not None, not NaN
+                return float(mu), "meta"
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+    mu, key = mu_lookup(table, k, T, lb, N)
+    return mu, key

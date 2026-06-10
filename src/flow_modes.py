@@ -35,6 +35,12 @@ Topology gate: cells whose largest connected component is below --lcc-min
 a small island is meaningless. LCC% is read from the meta sidecar when
 present, else estimated from the heat-kernel trace as max(Z_mean)/N.
 
+Equilibration gate: cells whose meta sidecar carries an explicit
+therm_verified=False (the build-time block-comparison stationarity check
+failed at its ~x3 budget — see core.graph_builder._verify_equilibration)
+are likewise excluded: their d_s does not measure the equilibrium
+ensemble. Sidecars without the flag (runs predating the check) pass.
+
 Outputs (cwd):
   flow_modes.csv        per-cell: both mode scores, descriptors, topology,
                         N-trend, verdict
@@ -57,7 +63,6 @@ from collections import defaultdict
 import numpy as np
 
 try:
-    from scipy.optimize import curve_fit
     _HAVE_SCIPY = True
 except Exception:
     _HAVE_SCIPY = False
@@ -351,8 +356,13 @@ def build(paths, args):
             meta_seen += 1
         lcc, lcc_src = lcc_pct_for(Z, N, meta)
         trans = float(meta["transitivity"]) if (meta and "transitivity" in meta) else float("nan")
+        # Equilibration verdict from the build: True (verified), False
+        # (the block-comparison check FAILED at the x3 budget), or None
+        # (no sidecar / sidecar predates the verification pass).
+        therm_ok = meta.get("therm_verified") if meta else None
         basins[(k, T, lb)][N].append(
-            dict(seed=seed, desc=desc, lcc=lcc, lcc_src=lcc_src, trans=trans, N=N))
+            dict(seed=seed, desc=desc, lcc=lcc, lcc_src=lcc_src, trans=trans,
+                 therm_ok=therm_ok, N=N))
 
     ref = build_ref_4d(torus4d)
     have_any_ref = len(ref) > 0
@@ -407,6 +417,13 @@ def build(paths, args):
             agg[kk] = np.array(agg[kk], float)
         agg["have_ref"] = have_any_ref and np.isfinite(agg["uvres"][-1])
         agg["lcc_ok"] = np.isfinite(agg["lcc"][-1]) and agg["lcc"][-1] >= args.lcc_min
+        # Equilibration gate (companion to the LCC gate): d_s measured on a
+        # graph whose build-time stationarity check failed is not a
+        # measurement of the equilibrium ensemble. Gate only when every seed
+        # at the largest N is explicitly False — sidecars without the flag
+        # (older runs) stay un-gated.
+        _tv = [r.get("therm_ok") for r in byN[Ns[-1]]]
+        agg["therm_ok"] = not (_tv and all(v is False for v in _tv))
         agg["ir_dir"] = trend_dir(Ns, agg["ir"])
         agg["uv_dir"] = trend_dir(Ns, agg["uv"])
         agg["flat_dir"] = trend_dir(Ns, agg["irflat"])
@@ -414,6 +431,9 @@ def build(paths, args):
         fl, fw = agg["flat"][-1], agg["flow"][-1]
         if not agg["lcc_ok"]:
             agg["verdict"] = f"REJECT: LCC {agg['lcc'][-1]:.0f}% < {args.lcc_min:.0f}%"
+            fl = fw = 0.0
+        elif not agg["therm_ok"]:
+            agg["verdict"] = "REJECT: not equilibrated (therm_verified=False)"
             fl = fw = 0.0
         elif fl >= 60 and fl >= fw:
             agg["verdict"] = f"FLAT-4D ({fl:.0f})"
@@ -432,7 +452,8 @@ def build(paths, args):
 
 def report(cells, have_ref, args):
     gated = [c for c in cells if not c["lcc_ok"]]
-    live = [c for c in cells if c["lcc_ok"]]
+    therm_gated = [c for c in cells if c["lcc_ok"] and not c.get("therm_ok", True)]
+    live = [c for c in cells if c["lcc_ok"] and c.get("therm_ok", True)]
     mode = "ref-anchored (residual vs 4D torus)" if have_ref else "ABSOLUTE (UV,IR)"
     print("\n" + "=" * 104)
     print(f"DUAL-MODE 4D RANKING   [{mode}]   "
@@ -454,11 +475,17 @@ def report(cells, have_ref, args):
         for c in sorted(gated, key=lambda c: c['lcc'][-1])[:8]:
             print(f"    k{c['k']:>2} T{c['T']:g} lb{c['lb']:g}  "
                   f"LCC={c['lcc'][-1]:.0f}% (src:{c['lcc_src'][-1]})")
+    if therm_gated:
+        print(f"\n  {len(therm_gated)} cells rejected as unequilibrated "
+              f"(build-time stationarity check failed at its x3 budget):")
+        for c in therm_gated[:8]:
+            print(f"    k{c['k']:>2} T{c['T']:g} lb{c['lb']:g}")
     print()
 
 
 def write_csv(cells, path, args):
-    cols = ["k", "T", "lb", "n_N", "N_max", "lcc_pct", "lcc_src", "transitivity",
+    cols = ["k", "T", "lb", "n_N", "N_max", "lcc_pct", "lcc_src", "therm_ok",
+            "transitivity",
             "uv_shoulder", "ir_plateau", "ir_flatness", "uv_conf",
             "uv_resid_vs_4Dtorus", "ir_resid_vs_4Dtorus",
             "flat_score", "flow_score", "ir_dir", "uv_dir", "flat_dir",
@@ -471,6 +498,7 @@ def write_csv(cells, path, args):
                 "k": c["k"], "T": c["T"], "lb": c["lb"],
                 "n_N": len(c["Ns"]), "N_max": int(c["Ns"][-1]),
                 "lcc_pct": f"{c['lcc'][-1]:.1f}", "lcc_src": c["lcc_src"][-1],
+                "therm_ok": c.get("therm_ok", True),
                 "transitivity": f"{c['trans'][-1]:.4f}",
                 "uv_shoulder": f"{c['uv'][-1]:.3f}",
                 "ir_plateau": f"{c['ir'][-1]:.3f}",
@@ -492,13 +520,12 @@ def plots(cells, have_ref, args):
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
-        import matplotlib.patches as mpatches
-        from matplotlib.colors import TwoSlopeNorm
     except Exception as e:
         print(f"[plots] matplotlib unavailable ({e})")
         return
-    live = [c for c in cells if c["lcc_ok"]]
-    gate = [c for c in cells if not c["lcc_ok"]]
+    live = [c for c in cells if c["lcc_ok"] and c.get("therm_ok", True)]
+    gate = [c for c in cells
+            if not (c["lcc_ok"] and c.get("therm_ok", True))]
 
     # ---- headline: the residual plane (ref mode) or absolute (UV,IR) ----
     fig, ax = plt.subplots(figsize=(8.5, 7))
@@ -554,7 +581,8 @@ def plots(cells, have_ref, args):
                         fontsize=6, xytext=(3, -9), textcoords="offset points")
     import time as _t
     from matplotlib.lines import Line2D
-    ttl += (f"\n{len(cells)} cells · {len(live)} pass LCC≥{args.lcc_min:g}% "
+    ttl += (f"\n{len(cells)} cells · {len(live)} pass gates "
+            f"(LCC≥{args.lcc_min:g}%, equilibrated) "
             f"· {len(gate)} excluded (gray ×) · updated {_t.strftime('%H:%M:%S')}")
     handles = [
         Line2D([0], [0], marker="o", linestyle="none", markerfacecolor="#7ec96e",
@@ -564,7 +592,7 @@ def plots(cells, have_ref, args):
                markeredgecolor="none", markersize=8,
                label="flowing-4D leaning (LCC ≥ gate)"),
         Line2D([0], [0], marker="x", linestyle="none", color="#bbb", markersize=7,
-               label=f"LCC < {args.lcc_min:g}% — excluded from call"),
+               label=f"LCC < {args.lcc_min:g}% or unequilibrated — excluded"),
         Line2D([0], [0], marker="*", linestyle="none", markerfacecolor="#1a9c1a",
                markeredgecolor="k", markersize=13,
                label="ideal target (marker size ∝ score)"),

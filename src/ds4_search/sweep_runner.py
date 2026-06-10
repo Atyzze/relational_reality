@@ -14,29 +14,29 @@ so transitions in shape across lb can be summarised at a glance.
 
 Usage
 -----
-    NOTE: this is the batch worker the dashboard spawns as
+    This is the batch worker the dashboard spawns as
     `python main.py __sweep__ …` (see main.py / ds4_search.live_app).
-    There is no `main.py sweep` subcommand — the example commands below
-    show this module's own argparse interface, which main.py forwards to
-    after the `__sweep__` marker.
+    `__sweep__` is an internal marker, not a public subcommand, but it IS
+    the way to drive this module's argparse interface by hand — main.py
+    forwards everything after the marker here:
 
     # Single (k, T), sweep lb at one N
-    python main.py sweep --k 9 --T 0.005 --N 64000 \\
-                          --lb 0.93,0.94,0.95,0.99
+    python main.py __sweep__ --k 9 --T 0.005 --N 64000 \\
+                             --lb 0.93,0.94,0.95,0.99
 
     # Compare T=0 (ground state) against T=0.005 (low-T basin) —
     # shows whether thermal noise smooths out a transition seen at T=0
-    python main.py sweep --k 9 --T 0,0.005 --N 64000 \\
-                          --lb 0.93,0.94,0.95,0.99
+    python main.py __sweep__ --k 9 --T 0,0.005 --N 64000 \\
+                             --lb 0.93,0.94,0.95,0.99
 
     # Full (k, T, lb, N) grid
-    python main.py sweep --k 6,8,9 --T 0,0.005 \\
-                          --N 16000,64000,256000 \\
-                          --lb 0.93,0.94,0.95,0.99
+    python main.py __sweep__ --k 6,8,9 --T 0,0.005 \\
+                             --N 16000,64000,256000 \\
+                             --lb 0.93,0.94,0.95,0.99
 
     # Use an explicit lb list (file)
-    python main.py sweep --k 9 --T 0.005 --N 64000 \\
-                          --lb-file my_lb_grid.txt
+    python main.py __sweep__ --k 9 --T 0.005 --N 64000 \\
+                             --lb-file my_lb_grid.txt
 
 The script reuses cached per-cell flow CSVs when present (skipping
 SLQ recompute), so iterating on the layout/grid is cheap once a
@@ -56,18 +56,23 @@ With 3 k × 10 lb × 3 N = 90 cells, plan for several hours.
 import argparse
 import concurrent.futures
 import threading
-import csv
 import glob
 import hashlib
 import json
 import math
 import multiprocessing as mp
 import os
-import resource
 import sys
 import time
-from collections import Counter, defaultdict
-from dataclasses import dataclass
+from collections import Counter
+
+# Unix-only (peak-RSS readout). A plain `import resource` is an ImportError
+# on Windows, which would kill the whole sweep at import time even though
+# setup.bat is a first-class entry point — so it degrades to None instead.
+try:
+    import resource
+except ImportError:                      # Windows
+    resource = None
 
 # ── BLAS thread pinning ───────────────────────────────────────────
 # Must be set BEFORE numpy is imported (here or transitively via
@@ -81,7 +86,15 @@ from dataclasses import dataclass
 # single-process BLAS speed) still wins.
 for _v in ("OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "OMP_NUM_THREADS",
           "NUMEXPR_NUM_THREADS", "BLIS_NUM_THREADS",
-          "VECLIB_MAXIMUM_THREADS"):
+          "VECLIB_MAXIMUM_THREADS",
+          # Numba has a @njit(parallel=True) kernel. We already parallelise
+          # ACROSS cells with one process per worker, so letting each worker
+          # ALSO spin up NUMBA_NUM_THREADS (defaults to the CPU count) threads
+          # for that kernel is nested parallelism: 32 workers × 32 numba
+          # threads ≈ 1000 threads fighting over 32 hardware threads. That
+          # thrashing reads as "100% busy" at low power. Pin numba to 1 thread
+          # per worker too. Set before numba is imported (below) so it takes.
+          "NUMBA_NUM_THREADS"):
     os.environ.setdefault(_v, "1")
 
 import numpy as np
@@ -90,18 +103,46 @@ from core.cell_tests import build_cell, build_torus_cell, run_flow_test
 from core.flow_probe import write_csv as write_flow_csv, write_quad_npz
 from core.disk_io import load_mu_table, mu_key
 from core.project_constants import MU_JSON, EC, MAX_DEG, PROD_SWEEPS, \
-    REDRAW_INTERVAL_S
-from core.graph_builder import calibrate_missing
+    REDRAW_INTERVAL_S, WORKERS, \
+    FLOW_REFRESH_INTERVAL_S, MIN_FREE_GB, MU_N_CAL, FLOW_DIR
+from core.graph_builder import calibrate_missing, update_mu_table_n
+
+
+def _report_thread_caps():
+    """Print the per-process BLAS / OpenMP / Numba thread caps at sweep startup,
+    so the log makes it OBVIOUS whether each worker is single-threaded. The sweep
+    forks one worker per core; if BLAS is NOT pinned to 1 thread per worker, then
+    N workers x N BLAS threads thrash over N cores and the spectral probe prints
+    "[flow] SLQ:" and then appears to hang (no error, no output, no flow CSV).
+    Seeing "OPENBLAS=1" here confirms the pin took; anything else is the hang
+    precursor and is called out loudly below."""
+    g = lambda v: os.environ.get(v, "unset")
+    line = (f"[threads] OMP={g('OMP_NUM_THREADS')} OPENBLAS={g('OPENBLAS_NUM_THREADS')} "
+            f"MKL={g('MKL_NUM_THREADS')} NUMBA={g('NUMBA_NUM_THREADS')}")
+    try:
+        import threadpoolctl
+        pools = threadpoolctl.threadpool_info()
+        if pools:
+            line += " | live: " + ", ".join(
+                f"{p.get('user_api', p.get('internal_api', '?'))}:"
+                f"{p.get('num_threads', '?')}t" for p in pools)
+    except Exception:
+        line += " | (pip install threadpoolctl for the live BLAS thread count)"
+    print(line, flush=True)
+    if g("OPENBLAS_NUM_THREADS") != "1" or g("OMP_NUM_THREADS") != "1":
+        print("  !!! BLAS is NOT pinned to 1 thread per worker. With one worker per "
+              "core this oversubscribes and the SLQ probe will appear to hang with no "
+              "error and write no flow CSV. Ensure nothing exports OMP_NUM_THREADS / "
+              "OPENBLAS_NUM_THREADS before launch, then rerun.", flush=True)
 
 
 # ═══════════════════════════════════════════════════════════════════
 #  Output paths
 # ═══════════════════════════════════════════════════════════════════
-# Per-cell flow CSVs go into a subdirectory so the project root stays
+# Per-cell flow CSVs go into the FLOW_DIR subdirectory (imported above from
+# core.project_constants — shared project-wide) so the project root stays
 # uncluttered as the dataset grows. Existing top-level flow_*.csv files
-# are still readable by the dashboard (it globs both locations); use
-# main.py slot 5 (migrate-csvs) to move legacy files into here.
-FLOW_DIR = "flow"
+# are still readable by the dashboard (it globs both locations).
 
 # Failure visibility. Cells that never produce a flow_*.csv (a worker raised,
 # or μ-calibration was dropped) are otherwise indistinguishable from
@@ -156,88 +197,106 @@ def _load_wall_history(flow_dir=FLOW_DIR):
     return samples
 
 
+def _load_compute_invested(flow_dir=FLOW_DIR, assume_workers=1):
+    """Sum cell wall_s across all meta sidecars (= total CORE-seconds, since
+    cells ran in parallel) AND estimate real elapsed wall-clock by dividing
+    each cell's wall_s by the worker count that was active when it ran
+    (recorded in meta as 'workers'). Cells written before we recorded that
+    fall back to `assume_workers`. Returns
+    (core_seconds, est_elapsed_seconds, n_with_workers, n_total)."""
+    core_s = elapsed_s = 0.0
+    n_with = n_total = 0
+    for p in glob.glob(os.path.join(flow_dir, "meta_*.json")):
+        try:
+            with open(p) as fh:
+                m = json.load(fh)
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+        w = m.get("wall_s")
+        if not (w and float(w) > 0):
+            continue
+        n_total += 1
+        core_s += float(w)
+        wk = m.get("workers")
+        if wk and int(wk) > 0:
+            elapsed_s += float(w) / float(wk)
+            n_with += 1
+        else:
+            elapsed_s += float(w) / max(1, int(assume_workers))
+    return core_s, elapsed_s, n_with, n_total
+
+
+def _self_rss_mb():
+    """Resident set size of THIS process in MB (Linux /proc). 0 if unknown."""
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    return float(line.split()[1]) / 1024.0   # kB → MB
+    except Exception:
+        pass
+    return 0.0
+
+
+def _free_mem_bytes():
+    """Allocatable memory in bytes (Linux /proc/meminfo MemAvailable, psutil
+    fallback). None if it can't be determined — the guard then no-ops."""
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) * 1024       # kB → bytes
+    except Exception:
+        pass
+    try:
+        import psutil
+        return int(psutil.virtual_memory().available)
+    except Exception:
+        return None
+
+
+def _load_mem_history(flow_dir=FLOW_DIR):
+    """(N, rss_bytes) pairs from meta sidecars that recorded rss_mb — the
+    per-cell memory cost trend, recovered across restarts like the ETA model."""
+    out = []
+    for p in glob.glob(os.path.join(flow_dir, "meta_*.json")):
+        try:
+            with open(p) as fh:
+                m = json.load(fh)
+            N, r = m.get("N"), m.get("rss_mb")
+            if N and r and float(r) > 0:
+                out.append((int(N), float(r) * 1024 * 1024))
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+    return out
+
+
+def _make_rss_model(samples):
+    """Return predict(N)->bytes for one cell's resident memory. Linear fit
+    rss≈a·N+b from history if it spans ≥2 distinct N; otherwise a conservative
+    analytical fallback (per-worker baseline + bytes/node) that OVER-estimates,
+    so the guard errs toward safety. The fit is floored by ½ the fallback so a
+    degenerate fit can't make us reckless."""
+    base, per_node = 300e6, 1024.0          # ~interpreter baseline; B/node
+    fallback = lambda N: base + per_node * N
+    Ns = sorted({n for n, _ in samples})
+    if len(Ns) >= 2:
+        import numpy as _np
+        a, b = _np.polyfit(_np.array([n for n, _ in samples], float),
+                           _np.array([r for _, r in samples], float), 1)
+        return lambda N: float(max(a * N + b, 0.5 * fallback(N)))
+    return fallback
+
+
 # ═══════════════════════════════════════════════════════════════════
 #  Shape classifier
 # ═══════════════════════════════════════════════════════════════════
-def classify_shape(d_s_mean, in_window):
-    """Heuristic shape tag for a d_s(t) curve.
-
-    Operates on the in-window region only. Counts local maxima/minima
-    after a small smoothing pass to suppress per-point noise. Returns
-    one of:
-       'flat'              — d_s varies by less than 0.5 across the window
-       'monotone_rising'   — d_s increases >= 0.8 with no significant dip
-       'monotone_falling'  — d_s decreases >= 0.8 with no significant rise
-       'single_peak'       — one local maximum, descending after
-       'double_peak'       — two local maxima
-       'bumpy'             — three or more local extrema
-       'undetermined'      — too few in-window points
-    """
-    valid = in_window & np.isfinite(d_s_mean)
-    if valid.sum() < 8:
-        return "undetermined"
-    y = d_s_mean[valid].copy()
-    # Smooth by a 3-point box average to suppress one-point wiggles.
-    if len(y) >= 5:
-        y_smooth = np.convolve(y, np.ones(3) / 3, mode="valid")
-    else:
-        y_smooth = y
-    # Find local maxima/minima (interior points only).
-    n = len(y_smooth)
-    peaks_idx = []
-    troughs_idx = []
-    for i in range(1, n - 1):
-        if y_smooth[i] > y_smooth[i - 1] and y_smooth[i] > y_smooth[i + 1]:
-            peaks_idx.append(i)
-        if y_smooth[i] < y_smooth[i - 1] and y_smooth[i] < y_smooth[i + 1]:
-            troughs_idx.append(i)
-
-    span = float(y_smooth.max() - y_smooth.min())
-    std_y = float(np.std(y))
-    # Flat requires BOTH small total range AND small std — otherwise
-    # a smoothly meandering curve passes the span check but is not
-    # at one dimension. Keep this in sync with ds4_search/static_dashboard.py.
-    if span < 0.5 and std_y < 0.4:
-        return "flat"
-
-    # Ignore extremely shallow extrema (< 0.15 amplitude relative to
-    # nearest neighbour). These are noise-level wiggles, not features.
-    def amplitude(idx):
-        # Compare to closest left and right neighbour values
-        left = max(idx - 1, 0)
-        right = min(idx + 1, n - 1)
-        return min(abs(y_smooth[idx] - y_smooth[left]),
-                   abs(y_smooth[idx] - y_smooth[right]))
-    peaks = [i for i in peaks_idx if amplitude(i) >= 0.15]
-    troughs = [i for i in troughs_idx if amplitude(i) >= 0.15]
-
-    n_peaks = len(peaks)
-    n_troughs = len(troughs)
-    n_extrema = n_peaks + n_troughs
-
-    # Endpoint-based classification: did the curve net rise or fall?
-    net = float(y_smooth[-1] - y_smooth[0])
-
-    if n_peaks == 0 and n_troughs == 0:
-        if net >= 0.8:
-            return "monotone_rising"
-        elif net <= -0.8:
-            return "monotone_falling"
-        elif std_y < 0.7:
-            return "flat"
-        else:
-            # Featureless but non-trivial variation — meandering
-            # without strong trend. Distinct from "flat" so the
-            # dashboard's leaderboard isn't mislead by a tag that
-            # implies a single-dimension regime when there isn't one.
-            return "wobble"
-    if n_peaks == 1 and n_troughs == 0:
-        return "single_peak"
-    if n_peaks == 1 and n_troughs == 1:
-        return "single_peak"
-    if n_peaks == 2:
-        return "double_peak"
-    return "bumpy"
+# Single source of truth lives in ds4_search/shape_classify.py so this
+# sweep and the offline dashboard (static_dashboard.py) can't drift apart.
+# Imported HERE rather than at the top of the file on purpose: the import
+# pulls in numpy, and the BLAS/numba thread-pinning env vars at the top must
+# be set before numpy is first imported. By this point numpy is already in.
+from ds4_search.shape_classify import classify_shape  # noqa: E402,F401
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -256,11 +315,19 @@ def get_rss_mb():
 
 
 def get_rss_peak_mb():
-    """Peak RSS in MB. ru_maxrss is in KB on Linux, bytes on macOS."""
+    """Peak RSS in MB. ru_maxrss is KILOBYTES on Linux but BYTES on macOS —
+    dispatch on sys.platform. (An earlier version guessed the unit from the
+    value's magnitude, which misread a genuinely large Linux peak — >100 GB
+    is exactly the regime the big-N warnings in the README describe — as
+    macOS bytes and under-reported it 1024×.) None on Windows (no
+    `resource` module) — callers already treat None as "unknown"."""
+    if resource is None:
+        return None
     try:
-        kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-        # Heuristic: if value is huge, assume macOS (bytes)
-        return kb / (1024.0 * 1024.0) if kb > 1e8 else kb / 1024.0
+        v = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        if sys.platform == "darwin":
+            return v / (1024.0 * 1024.0)   # bytes → MB
+        return v / 1024.0                   # kB → MB (Linux and BSDs)
     except Exception:
         return None
 
@@ -450,6 +517,45 @@ def _finalize_sweep(args, classifications, cells, seed_list, t_total,
     ))
 
 
+def _flow_health_signal():
+    """If the heatmap comes up empty, say WHY. Distinguish 'no cell has
+    finished yet' (benign, early in a run) from 'cells ARE finishing but every
+    one is FAILING' (loud — you are silently banking zero usable data). The
+    latter shows up as fail_*.json sidecars with no flow_*.csv beside them.
+    Pure read-only + best-effort: it must never perturb the sweep."""
+    try:
+        import collections
+        ok = glob.glob("flow/flow_*.csv") + glob.glob("flow_*.csv")
+        fails = glob.glob("flow/fail_*.json") + glob.glob("fail_*.json")
+        if ok or not fails:
+            return  # have data, or nothing has run yet -> nothing to warn about
+        reasons = collections.Counter()
+        sample = None
+        for fp in fails:
+            try:
+                with open(fp) as fh:
+                    rec = json.load(fh)
+                reasons[rec.get("reason", "unknown")] += 1
+                if sample is None:
+                    sample = rec.get("detail", "")
+            except Exception:
+                reasons["unreadable"] += 1
+        bar = "!" * 74
+        top = ", ".join(f"{n}x {r}" for r, n in reasons.most_common())
+        print("\n" + bar +
+              f"\n  {len(fails)} cells have FINISHED but ALL FAILED - 0 produced a flow CSV,"
+              "\n  so the heatmap has nothing to plot. This is NOT a plotting problem."
+              f"\n  Failure reasons: {top}" +
+              (f"\n  Example detail: {str(sample)[:180]}" if sample else "") +
+              "\n  Per-cell records are in flow/fail_*.json (and the [tag] FAILED lines"
+              "\n  above). If k_avg sits far below your target k, the graphs are"
+              "\n  under-thermalised (typically the very-high-lb bootstrap) and the d_s"
+              "\n  probe then fails on the near-1D / disconnected result."
+              "\n" + bar + "\n", flush=True)
+    except Exception:
+        pass
+
+
 def _refresh_shape_analysis():
     """Re-run the shape analysis on the data gathered so far, refreshing
     shape_summary.csv and the histogram/heatmap PNGs in the output dir.
@@ -467,6 +573,7 @@ def _refresh_shape_analysis():
     except Exception as e:
         print(f"  [shape] refresh skipped: {type(e).__name__}: {e}",
               flush=True)
+    _flow_health_signal()
     # Dual-mode (flat-4D vs flowing-4D) analysis on the same data. Additive
     # and best-effort: a hiccup here must never take down the sweep.
     try:
@@ -477,6 +584,116 @@ def _refresh_shape_analysis():
     except Exception as e:
         print(f"  [flow_modes] refresh skipped: {type(e).__name__}: {e}",
               flush=True)
+    # Field-isotropy heatmap from the per-cell isotropy summaries stored in the
+    # meta sidecars (computed once at build time — nothing is re-probed here).
+    # Additive and best-effort.
+    try:
+        from physics_tests import isotropy as _iso
+        out = _iso.render_isotropy_heatmap(".", "isotropy_heatmap.png")
+        if out:
+            print("  \u21bb isotropy heatmap refreshed (isotropy_heatmap.png)",
+                  flush=True)
+    except Exception as e:
+        print(f"  [isotropy] heatmap refresh skipped: {type(e).__name__}: {e}",
+              flush=True)
+    # Heavier N->infinity convergence pass + its leaderboard charts, on a
+    # slower throttle (only meaningful once cells have several N).
+    _maybe_refresh_flow_convergence()
+
+
+# Count of μ-calibration drops, surfaced in every status payload (set once
+# at sweep start by _mu_failures_banner via main()).
+_MU_FAIL_COUNT = [0]
+
+# Wall-clock of the last flow-convergence refresh, so it can run on a slower
+# cadence than the per-cell heatmaps/maps above.
+_last_flow_conv_run = 0.0
+
+# Wall-clock of the last μ-vs-N drift audit (same slow cadence; the audit only
+# reads JSON sidecars but there is no point re-running it per cell).
+_last_mu_drift_run = 0.0
+
+
+def _maybe_update_mu_drift(mu_table):
+    """Throttled μ-vs-N drift audit (see graph_builder.update_mu_table_n).
+    Mutates `mu_table` in place — corrections become visible to every
+    work-item submitted AFTER this call — and persists the merged table.
+    Must run on the dispatch thread (it feeds future submits); reads only
+    meta sidecars, so it is cheap. Best-effort, never takes down the sweep."""
+    global _last_mu_drift_run
+    iv = FLOW_REFRESH_INTERVAL_S
+    if iv < 0:
+        return
+    now = time.time()
+    if iv > 0 and (now - _last_mu_drift_run) < iv:
+        return
+    _last_mu_drift_run = now
+    try:
+        added = update_mu_table_n(mu_table, flow_dir=FLOW_DIR,
+                                  log_fn=lambda m: print(m, flush=True))
+        if added:
+            from core.disk_io import save_mu_table
+            save_mu_table(mu_table)
+            print(f"  \u21bb μ-vs-N corrections saved: {len(added)} new "
+                  f"N-qualified entr{'y' if len(added) == 1 else 'ies'} "
+                  f"(applied only to rungs with no data yet)", flush=True)
+    except Exception as e:
+        print(f"  [μ-drift] audit skipped: {type(e).__name__}: {e}",
+              flush=True)
+
+
+def _maybe_refresh_flow_convergence():
+    """Throttled refresh of flow_convergence.csv (per-cell N->infinity plateau
+    extrapolation) and its leaderboard charts (flow_map/flow_scatter). Runs at
+    most once per FLOW_REFRESH_INTERVAL_S; a negative interval disables it.
+    Heavier than the maps above and only meaningful with several N per cell,
+    so it does not run on every cell. Best-effort and quiet (the tools' own
+    verbose tables are suppressed; one status line is printed)."""
+    global _last_flow_conv_run
+    iv = FLOW_REFRESH_INTERVAL_S
+    if iv < 0:                                  # disabled
+        return
+    now = time.time()
+    if iv > 0 and (now - _last_flow_conv_run) < iv:
+        return                                  # throttled
+    _last_flow_conv_run = now
+    import contextlib
+    import io
+    try:
+        import flow_convergence
+        with contextlib.redirect_stdout(io.StringIO()):
+            flow_convergence.main(["--dir", "."])
+        if os.path.exists("flow_convergence.csv"):
+            import flow_charts
+            with contextlib.redirect_stdout(io.StringIO()):
+                flow_charts.main(["--csv", "flow_convergence.csv"])
+            print("  \u21bb flow convergence + charts refreshed "
+                  "(flow_convergence.csv + flow_map/flow_scatter)", flush=True)
+    except Exception as e:
+        print(f"  [flow_convergence] refresh skipped: "
+              f"{type(e).__name__}: {e}", flush=True)
+
+
+def _mu_failures_banner():
+    """μ-calibration drops mean grid cells that are PHYSICALLY UNREACHABLE
+    (no μ in the search range realises the target k there) — per-cell
+    information, not a program error, so the sweep must not abort. But it
+    must also be impossible to miss: red banner at start and a count in the
+    status JSON / dashboard."""
+    try:
+        with open(MU_FAILURES_JSON) as fh:
+            led = json.load(fh)
+    except (OSError, ValueError):
+        return 0
+    n = len(led) if isinstance(led, (list, dict)) else 0
+    if n:
+        bar = "!" * 74
+        print(f"\n{bar}\n  ⚠ {n} grid cell(s) FAILED μ-calibration — those "
+              f"(k, T, lb) combinations are\n  physically unreachable (no μ "
+              f"realises the target k). They are skipped and\n  marked '!' "
+              f"in the heatmaps. Ledger: {MU_FAILURES_JSON}\n{bar}\n",
+              flush=True)
+    return n
 
 
 def build_status(phase, started_at, n_total, n_done, n_failed,
@@ -530,6 +747,18 @@ def build_status(phase, started_at, n_total, n_done, n_failed,
     # remaining/rate estimate only before enough samples exist to fit.
     eta_final = eta_sec_override if eta_sec_override is not None else eta
 
+    # Feasibility check: when the extrapolated ETA exceeds half a year the
+    # configured grid is not going to finish on this machine — say so in
+    # words, instead of trusting the user to convert a 10-digit second count.
+    # The threshold is deliberately generous; multi-month sweeps are real.
+    eta_warning = None
+    if eta_final is not None and eta_final > 183 * 86400:
+        eta_warning = (
+            f"projected finish is ~{eta_final / (365.25 * 86400):.1f} YEARS "
+            f"away — the remaining N ladder is infeasible on this machine. "
+            f"Trim the top N rungs in main.toml (see the README note on the "
+            f"N ladder); already-computed cells are kept and skipped.")
+
     out = {
         "phase": phase,                       # running | done | calibrating
         "started_at": started_at,
@@ -545,6 +774,8 @@ def build_status(phase, started_at, n_total, n_done, n_failed,
         "n_remaining": remaining,
         "rate_per_min": round(rate, 2) if rate else None,
         "eta_sec": round(eta_final) if eta_final else None,
+        "eta_warning": eta_warning,
+        "mu_failures": _MU_FAIL_COUNT[0],
         "last_cell": last_cell,
         "next_cell": (
             {"k": next_cell[0], "T": next_cell[1],
@@ -656,7 +887,7 @@ def restart_self(reason, status_json_path, status_payload):
     status_payload["restart_reason"] = reason
     write_status_json(status_json_path, status_payload)
     print(f"\n  ⟳ source change detected: {reason}", flush=True)
-    print(f"    restarting sweep via os.execv (cached cells will skip)",
+    print("    restarting sweep via os.execv (cached cells will skip)",
           flush=True)
     # Brief pause so the status JSON shows "restarting" for at least
     # one dashboard poll cycle — otherwise it's overwritten so fast
@@ -664,7 +895,7 @@ def restart_self(reason, status_json_path, status_payload):
     time.sleep(1.0)
     os.execv(sys.executable, [sys.executable, *sys.argv])
     # ↑ Does not return on success. If it does return, exec failed.
-    print(f"    [FATAL] os.execv failed; exiting with code 1",
+    print("    [FATAL] os.execv failed; exiting with code 1",
           flush=True)
     sys.exit(1)
 
@@ -788,6 +1019,15 @@ def _worker_init():
         # A missing/odd libc must not stop the worker from doing its job;
         # the parent-side killpg remains the primary teardown path.
         pass
+    # Belt-and-suspenders: also cap numba's thread pool at runtime, in case
+    # NUMBA_NUM_THREADS (set at module import) was bypassed. We parallelise
+    # across cells with one process per worker, so each worker's parallel
+    # kernel must stay single-threaded or the box oversubscribes badly.
+    try:
+        import numba
+        numba.set_num_threads(1)
+    except Exception:
+        pass
 
 
 def _sidecar_path(csv_path, new_prefix, new_ext):
@@ -820,6 +1060,14 @@ def _write_cell_meta(work_item, cell, res, params, mu_table, csv_path, wall_s):
         "N_eff": int(cell.N_eff),
         "lam_max_bound": float(cell.lam_max_bound),
         "wall_s": round(float(wall_s), 2),
+        # parallel workers active for this run, so summed cell time can be
+        # turned into an elapsed-wall-clock estimate later (wall_s is this
+        # cell's own time; many ran at once).
+        "workers": params.get("workers"),
+        # resident memory of this worker after build+probe (MB) — feeds the
+        # memory guard's RSS-vs-N model so it can predict the cost of a new
+        # cell and avoid starting one that would exhaust RAM.
+        "rss_mb": round(_self_rss_mb(), 1),
     }
     if tg is not None and len(tg):
         meta.update(t_lo=float(tg[0]), t_hi=float(tg[-1]), n_t=int(len(tg)))
@@ -828,9 +1076,28 @@ def _write_cell_meta(work_item, cell, res, params, mu_table, csv_path, wall_s):
         meta.update(kind="torus", d=d, N=N, seed=seed, mu=None)
     else:
         _, k, T, lb, N, seed = work_item
+        # Ground truth: the μ the cell was ACTUALLY grown with (stashed by
+        # build_cell), falling back to a base-table lookup only for safety —
+        # after N-qualified drift corrections the two can differ.
+        mu_used = getattr(cell, "mu_used", None)
+        if mu_used is None:
+            mu_used = float(mu_table.get(mu_key(k, T, lb), float("nan")))
         meta.update(kind="cell", k=k, T=T, lb=lb, N=N, seed=seed,
-                    mu=float(mu_table.get(mu_key(k, T, lb), float("nan"))),
+                    mu=float(mu_used),
                     therm_sweeps=int(cell.sweeps))
+        ti = getattr(cell, "therm_info", None)
+        if ti:
+            meta.update(therm_converged=bool(ti.get("converged")),
+                        therm_verified=ti.get("verified"),
+                        therm_verify_blocks=int(ti.get("blocks", 0)),
+                        therm_total_sweeps=int(ti.get("total_sweeps",
+                                                      cell.sweeps)),
+                        # evidence + provenance: live full-resolution verdicts
+                        # are authoritative; reverify only upgrades metas
+                        # WITHOUT this marker (its decimated-trace verdict is
+                        # an approximation of this one).
+                        therm_verify_stats=ti.get("detail"),
+                        therm_verify_method="live-v2")
     if s is not None:
         meta.update(
             lcc_pct=float(s.lcc_pct), transitivity=float(s.transitivity),
@@ -839,6 +1106,10 @@ def _write_cell_meta(work_item, cell, res, params, mu_table, csv_path, wall_s):
             k_avg=float(s.k_avg), k_min=int(s.k_min), k_max=int(s.k_max),
             edges=int(s.edges), triangles=int(s.triangles),
             k_top=int(cell.peak_deg))
+        if meta.get("kind") == "cell" and meta.get("k"):
+            # realised-k drift, so the μ-vs-N audit can read it directly
+            meta["k_err_pct"] = round(
+                100.0 * (float(s.k_avg) - meta["k"]) / meta["k"], 3)
     else:
         # torus: regular lattice, connected, triangle-free
         meta.update(lcc_pct=100.0, transitivity=0.0, k_top=int(cell.peak_deg))
@@ -856,6 +1127,9 @@ def _write_cell_meta(work_item, cell, res, params, mu_table, csv_path, wall_s):
             "cols": ["sweep", "k_avg", "sum_deg_sq"],
             "rows": [[int(a), float(b), float(c)] for (a, b, c) in tr],
         }
+    iso = getattr(cell, "isotropy", None)
+    if iso:
+        meta["isotropy"] = iso
     meta_path = _sidecar_path(csv_path, "meta", "json")
     tmp = f"{meta_path}.tmp.{os.getpid()}"
     try:
@@ -961,6 +1235,18 @@ def _run_one(work_item, params, mu_table):
             _, k, T, lb, N, _seed = work_item
             cell = build_cell(k, T, lb, N, seed, mu_table)
 
+        # Field-isotropy summary on the cell's OWN Laplacian (already built for
+        # the flow probe — no graph is re-evolved). Stored in the meta sidecar
+        # and fed to the auto-refreshed isotropy heatmap, so uniformity is
+        # measured on every graph the sweep produces. Best-effort: a hiccup
+        # here must never fail a finished cell.
+        try:
+            from physics_tests import isotropy as _iso
+            cell.isotropy = _iso.cell_isotropy_summary(cell.L_csr, seed=seed)
+        except Exception as _ie:
+            print(f"[{tag}] isotropy summary skipped: "
+                  f"{type(_ie).__name__}: {_ie}", flush=True)
+
         res = run_flow_test(cell,
                             n_probes=params["n_probes"],
                             lanczos_m=params["lanczos_m"],
@@ -1032,24 +1318,27 @@ def main(argv=None):
     ap = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--k", type=str, required=True,
-                    help="Comma-separated k values (e.g. '6,8,9')")
-    ap.add_argument("--T", type=str, required=True,
-                    help="Temperature(s), comma-separated. T=0 is a useful "
+    ap.add_argument("--k", type=str, default=None,
+                    help="Comma-separated k values (e.g. '6,8,9'). "
+                         "Omitted → the [grid] k from main.toml.")
+    ap.add_argument("--T", type=str, default=None,
+                    help="Temperature(s), comma-separated. Omitted → the "
+                         "[grid] T from main.toml. T=0 is a useful "
                          "ground-state anchor (no thermal noise); T=0.005 "
-                         "is the typical low-T basin. Example: '0,0.005' to "
-                         "sweep both as separate panels.")
+                         "is the typical low-T basin.")
     ap.add_argument("--lb", type=str, default=None,
                     help="Comma-separated lb values "
                          "(e.g. '0.93,0.94,0.95,0.99')")
     ap.add_argument("--lb-file", type=str, default=None,
                     help="Path to file with one lb value per line "
                          "(alternative to --lb)")
-    ap.add_argument("--N", type=str, required=True,
-                    help="Comma-separated N values (e.g. '16000,64000,256000')")
-    ap.add_argument("--seed", type=int, default=42,
+    ap.add_argument("--N", type=str, default=None,
+                    help="Comma-separated N values (e.g. '16000,64000'). "
+                         "Omitted → the [grid] N from main.toml.")
+    ap.add_argument("--seed", type=int, default=None,
                     help="Single base seed (back-compat). Ignored if "
-                         "--seeds is given.")
+                         "--seeds is given; omitted → the [grid] seeds "
+                         "from main.toml (seed .. seed+n_seeds-1).")
     ap.add_argument("--seeds", type=str, default=None,
                     help="Comma-separated seeds to run per cell "
                          "(e.g. '42,43,44,45,46'). Each seed produces its "
@@ -1109,17 +1398,33 @@ def main(argv=None):
     ap.add_argument("--show-plan", action="store_true",
                     help="Print the cell list + estimated runtime, then exit")
     args = ap.parse_args(argv)
+    _report_thread_caps()
 
-    k_vals = parse_ints(args.k)
-    T_vals = parse_floats(args.T)
-    N_vals = parse_ints(args.N)
-    # Seeds to run per cell. --seeds (a list) is the normal path now;
-    # --seed (single) is kept so older invocations still work. Each seed
-    # is an independent unit of work with its own flow_*.csv.
+    # Build the selected graph-growth engine's native library ONCE here, in the
+    # parent, before any calibration or sweep worker pool forks — so the many
+    # parallel build_graph calls find it already compiled and never race to
+    # build it. No-op for numba / when no compiler is present (runs on numba).
+    from core.graph_builder import ensure_engine_built
+    _engine = ensure_engine_built(log=print)
+    print(f"  [engine] graph growth backend: {_engine}", flush=True)
+
+    # Grid source: explicit CLI args win; anything omitted falls back to the
+    # [grid] in main.toml (via core.project_constants). main.py launches the
+    # sweep with NO grid args, so the normal path reads main.toml here — the
+    # grid lives in exactly one place and is never marshalled through main.
+    from core import project_constants as _cfg
+    k_vals = parse_ints(args.k) if args.k else list(_cfg.K_ALL)
+    T_vals = parse_floats(args.T) if args.T else list(_cfg.T_ALL)
+    N_vals = parse_ints(args.N) if args.N else list(_cfg.N_ALL)
+    # Seeds to run per cell. --seeds (a list) is the normal explicit path;
+    # --seed (single) is kept for older invocations; omit both → main.toml's
+    # SEEDS. Each seed is an independent unit of work with its own flow_*.csv.
     if args.seeds:
         seed_list = parse_ints(args.seeds)
-    else:
+    elif args.seed is not None:
         seed_list = [args.seed]
+    else:
+        seed_list = list(_cfg.SEEDS)
     if not seed_list:
         raise SystemExit("no seeds to run (empty --seeds).")
     if args.lb_file:
@@ -1129,7 +1434,7 @@ def main(argv=None):
     elif args.lb:
         lb_vals = parse_floats(args.lb)
     else:
-        raise SystemExit("must give --lb or --lb-file")
+        lb_vals = list(_cfg.LB_ALL)
 
     # Cell grid: (k, T, lb, N). Iteration order is cheap-first — N is
     # the outermost axis so we exhaust every (T, k, lb) combo at the
@@ -1200,7 +1505,7 @@ def main(argv=None):
             phase="calibrating",
             started_at=time.time(),
             n_total=len(cells) * len(seed_list), n_done=0, n_failed=0,
-            calibration={"n_targets": len(missing)},
+            calibration={"n_targets": len(missing), "n_cal": MU_N_CAL},
         ))
         # Do it. calibrate_missing parallelises by default and persists
         # the table to disk after each successful cell, so a partial
@@ -1238,6 +1543,9 @@ def main(argv=None):
     # when a previously-failed cell calibrates. `cal_failures` is empty when
     # no calibration ran this session.
     _write_mu_failures(needed_keys, mu_table, cal_failures, MU_FAILURES_JSON)
+    # Red banner + status-JSON count for any calibration drops, past or
+    # present — quiet ledgers get missed; unreachable grid cells shouldn't.
+    _MU_FAIL_COUNT[0] = _mu_failures_banner()
 
     t_total = time.time()
     classifications = []  # rows: (k, T, lb, N, seed, shape, ds_min, ds_max)
@@ -1324,15 +1632,32 @@ def main(argv=None):
     # dispatch loop only *requests* refreshes; the thread coalesces them.
     eta_done_samples = _load_wall_history(FLOW_DIR)
     if eta_done_samples:
-        _prior_compute = sum(w for _, w in eta_done_samples)
+        try:
+            _assume = len(os.sched_getaffinity(0))
+        except (AttributeError, OSError):
+            _assume = os.cpu_count() or 1
+        _core_s, _elapsed_s, _n_w, _n_tot = _load_compute_invested(
+            FLOW_DIR, assume_workers=_assume)
         print(f"  ETA warm-start: recovered {len(eta_done_samples)} prior "
               f"cell wall-time(s) from {FLOW_DIR}/meta_*.json — the cost-vs-N "
               f"trend persists across restarts", flush=True)
-        print(f"  compute already invested: {_fmt_hms(_prior_compute)} "
-              f"(summed cell wall time across all prior runs)", flush=True)
+        print(f"  total compute: {_fmt_hms(_core_s)} of CORE time "
+              f"(sum of per-cell wall over {_n_tot} cells — cells run in "
+              f"parallel, so this is core-hours, NOT elapsed time)",
+              flush=True)
+        if _n_w == _n_tot:
+            _cov = "from each cell's recorded worker count"
+        elif _n_w == 0:
+            _cov = (f"no cell recorded its worker count yet, so all assume "
+                    f"{_assume}-way parallel — a rough estimate")
+        else:
+            _cov = (f"{_n_tot - _n_w} older cell(s) predate worker-count "
+                    f"recording and assume {_assume}-way")
+        print(f"  estimated real elapsed: ~{_fmt_hms(_elapsed_s)} "
+              f"(core time ÷ workers per cell; {_cov})", flush=True)
     eta_remaining = Counter(_work_N(w) for w in work)
     SHAPE_REFRESH_SECS = float(getattr(args, "shape_refresh_secs", 10.0))
-    # Periodic redraw heartbeat from config.toml ([dashboard].redraw_interval_s,
+    # Periodic redraw heartbeat from main.toml ([dashboard].redraw_interval_s,
     # default 10s; 0 = off). When on, it also governs the min-interval so the
     # configured cadence is what you actually get (a small value isn't blocked
     # by the larger event-throttle); when off, fall back to the CLI throttle
@@ -1353,11 +1678,18 @@ def main(argv=None):
     n_failed = 0
     classifications = []
 
-    # Worker count — default to all granted cores. With BLAS pinned to
-    # 1 thread per worker (env vars at module import) we can safely
-    # run as many parallel SLQs as we have cores.
+    # Worker count. Precedence: --workers flag > [compute].workers in
+    # main.toml > auto (all granted logical cores). With BLAS *and* numba
+    # pinned to 1 thread per worker (env at module import), each worker is a
+    # single-threaded process, so the parallelism is exactly the worker count.
+    # On a memory- or cache-bound load, fewer workers than logical cores is
+    # often FASTER (less contention for RAM bandwidth and shared L3) and draws
+    # less power — set [compute].workers to your physical core count, or lower,
+    # to dial resource use down. 0 anywhere = auto.
     if args.workers > 0:
         n_workers = args.workers
+    elif WORKERS > 0:
+        n_workers = WORKERS
     else:
         try:
             n_workers = len(os.sched_getaffinity(0))
@@ -1384,7 +1716,7 @@ def main(argv=None):
     if not work:
         # Everything was cached — nothing to dispatch, fall through
         # to classifications writing.
-        print(f"  all items cached; nothing to compute.", flush=True)
+        print("  all items cached; nothing to compute.", flush=True)
     else:
         # Use fork start method so workers inherit the parent's already-
         # loaded modules (numpy, core modules, etc) without re-importing.
@@ -1400,6 +1732,10 @@ def main(argv=None):
             "n_probes": args.n_probes,
             "lanczos_m": args.lanczos_m,
             "half_window": args.half_window,
+            # recorded into each cell's meta so a later run can estimate REAL
+            # elapsed wall-clock (= summed cell time ÷ workers), which summed
+            # cell time alone can't give once cells run in parallel.
+            "workers": n_workers,
         }
         last_source_check = time.time()
         # Most recent CELL completion — torus completions don't touch
@@ -1420,18 +1756,68 @@ def main(argv=None):
                 # which would otherwise display 1200+ "in flight" cells
                 # when only 16 are really executing.
                 work_iter = iter(work)
+                _lookahead = []
+                _MIN_FREE = MIN_FREE_GB * (1024 ** 3)
+                _rss_model = _make_rss_model(_load_mem_history(FLOW_DIR))
+                _guard_on = (MIN_FREE_GB > 0
+                             and _free_mem_bytes() is not None)
+                _last_hold = [0.0]
+                _last_eta_warn = [0.0]
+                if _guard_on:
+                    print(f"  memory guard on: keeping ≥{MIN_FREE_GB:g} GB "
+                          f"free ({(_free_mem_bytes() or 0) / 2**30:.1f} GB "
+                          f"now). A cell that would breach it waits for "
+                          f"running cells to finish first, so the sweep "
+                          f"throttles itself down instead of being OOM-killed "
+                          f"(config [compute].min_free_gb).", flush=True)
+                elif MIN_FREE_GB > 0:
+                    print("  memory guard requested but free memory can't be "
+                          "read here; proceeding without it.", flush=True)
+
+                def _peek():
+                    if not _lookahead:
+                        try:
+                            _lookahead.append(next(work_iter))
+                        except StopIteration:
+                            return None
+                    return _lookahead[0]
 
                 def _submit_one():
-                    try:
-                        nw = next(work_iter)
-                    except StopIteration:
+                    """Submit the next item, unless the memory guard says a new
+                    cell would drop free RAM below the margin — then hold it
+                    back (it stays buffered) and let running cells finish. When
+                    nothing is in flight we submit regardless: waiting can't
+                    free more, so a single huge cell runs solo rather than
+                    stalling the sweep."""
+                    item = _peek()
+                    if item is None:
                         return False
+                    if _guard_on and in_flight:
+                        free = _free_mem_bytes()
+                        if (free is not None
+                                and free - _rss_model(_work_N(item)) < _MIN_FREE):
+                            now = time.time()
+                            if now - _last_hold[0] > 20:
+                                print(f"  [mem-guard] {free / 2**30:.1f} GB "
+                                      f"free; holding new cells (keep ≥"
+                                      f"{MIN_FREE_GB:g} GB) — waiting for "
+                                      f"{len(in_flight)} running to finish.",
+                                      flush=True)
+                                _last_hold[0] = now
+                            return False
+                    _lookahead.pop(0)
                     in_flight[executor.submit(
-                        _run_one, nw, params, mu_table)] = nw
+                        _run_one, item, params, mu_table)] = item
                     return True
 
-                for _ in range(min(n_workers, len(work))):
-                    _submit_one()
+                def _fill():
+                    """Submit until the pool is full, work runs out, or the
+                    memory guard holds us back — so we ramp back up to full
+                    concurrency once running cells free their RAM."""
+                    while len(in_flight) < n_workers and _submit_one():
+                        pass
+
+                _fill()
 
                 while in_flight:
                     done, _pending = concurrent.futures.wait(
@@ -1455,7 +1841,7 @@ def main(argv=None):
                                      math.nan, math.nan))
                                 n_failed += 1
                             eta_remaining[_work_N(w)] -= 1
-                            _submit_one()
+                            _fill()
                             continue
 
                         # Item finished (cell or torus): update the ETA
@@ -1495,8 +1881,9 @@ def main(argv=None):
                         # reserved for sweep cells; torus refs aren't
                         # in the dashboard table).
 
-                        # Refill the pool with the next pending item.
-                        _submit_one()
+                        # Refill the pool (memory-permitting) with pending
+                        # items — back up to full concurrency as RAM frees.
+                        _fill()
 
                         in_flight_list = [_work_in_flight_dict(ww)
                                           for ww in in_flight.values()]
@@ -1544,7 +1931,7 @@ def main(argv=None):
                             eta_done_samples,
                             list(eta_remaining.elements()),
                             n_workers)
-                        write_status_json(args.status_json, build_status(
+                        _status = build_status(
                             phase="running",
                             started_at=t_total,
                             n_total=len(cells) * len(seed_list),
@@ -1554,13 +1941,29 @@ def main(argv=None):
                             eta_sec_override=eta,
                             compute_spent_sec=sum(w for _, w in eta_done_samples),
                             cells_done_session=max(0, n_done - cached_cell_count),
-                        ))
+                        )
+                        write_status_json(args.status_json, _status)
+                        # Surface grid infeasibility on the console too, not
+                        # just in the polled JSON — throttled so it nags
+                        # rather than spams.
+                        if (_status.get("eta_warning")
+                                and time.time() - _last_eta_warn[0] > 600):
+                            print(f"  ⚠ {_status['eta_warning']}", flush=True)
+                            _last_eta_warn[0] = time.time()
 
                         # Ask the background thread to regenerate plots.
                         # Non-blocking: it renders off the dispatch path and
                         # at most once per SHAPE_REFRESH_SECS, so finished
                         # workers never idle waiting on matplotlib.
                         shape_refresher.request()
+
+                        # μ-vs-N drift audit, on the same slow throttle as
+                        # the convergence pass. Runs in THIS thread on
+                        # purpose: it mutates the live mu_table dict, which
+                        # is pickled into every subsequent submit, so
+                        # corrections must land between submits, not in a
+                        # background thread racing them.
+                        _maybe_update_mu_drift(mu_table)
             finally:
                 executor.shutdown(wait=True)
                 # Quiesce the background plotter before the synchronous

@@ -26,3 +26,8 @@ Thumbs.db
 *~
 .idea/
 .vscode/
+
+# Native engine builds (compiled per-machine with -march=native; never commit)
+*.so
+*.o
+engines/**/target/

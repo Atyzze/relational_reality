@@ -1,0 +1,104 @@
+# memory_benchmark.toml
+# =====================================================================
+# One file, all knobs, for main.py bench. (TOML = "Tom's Obvious,
+# Minimal Language" — after Tom Preston-Werner; not "text-only markup".)
+#
+# The benchmark profiles the graph-GROWTH engine — the Metropolis core
+# from src/core/physics_engine.py — as a memory-latency workload, and
+# pits the existing Numba engine (the "py" track, our reference) against
+# the C++ engine (engine_core.cpp) AND the Rust engine (engine_core.rs),
+# side by side, at every stage. All three implement the same Hamiltonian and
+# return the same array construct; cpp & rust share an RNG so are bit-identical.
+#
+# Metric: TIME TO EQUILIBRIUM. Each cell grows one graph from empty to its
+# final equilibrium and times the whole run (no warm/measure split, no mid-run
+# polling). The live HTML refreshes ~every 4s, one update per finished cell.
+#
+# Sweep ORDER (this is the whole point):
+#   For each graph size N, expand parallelism first —
+#     1 worker pinned to each core in turn, then groups of 2, 4, 8, …
+#     up to every logical core at once — running ALL tracks at each step.
+#   THEN grow N (×n_factor) and repeat the whole core-expansion.
+#   As N grows the per-worker footprint grows, so the concurrency ladder
+#   automatically truncates (16 workers won't fit, then 8, then …), down
+#   to a single worker. The sweep stops at the largest N where ONE worker
+#   still fits in RAM minus the reserve — i.e. the biggest blob the memory
+#   system can hold without swapping to disk.
+#
+#   Run:  python main.py bench
+#   Preview the exact schedule without running anything:
+#         python main.py bench --dry-run
+
+[engine]
+# Growth Hamiltonian knobs — H = edge_cost·E + degree_penalty·Σ d².
+# These are the raw physics_engine fields. The equilibrium average degree is set
+# by the edge_cost / degree_penalty ratio (NOT by N): the marginal edge energy
+# crosses zero at  d_u+d_v = -edge_cost/(2·degree_penalty) - 1,  and the 90%
+# locality (triangle) moves nudge the average a little above half of that. (At lb=0.99 the bump is larger,
+# so mean_degree auto-calibration is the reliable way to hit a target k.)
+max_degree    = 32        # hard ceiling, never exceeded (your requirement)
+# mean_degree : if > 0, degree_penalty below is IGNORED and auto-calibrated so the
+# grown graph's average degree ≈ this. k=8 matches a 4-D lattice (2 neighbours per
+# dimension × 4). Set to 0 to use degree_penalty verbatim instead.
+mean_degree   = 8
+degree_penalty = 0.05     # μ — used only when mean_degree = 0 (μ=0.05 ⇒ avg deg ≈ 5.1)
+temperature   = 0.004     # T
+edge_cost     = -1.0      # ec
+locality_bias = 0.99      # ℓb — 99% local (triangle) moves; from empty this bootstraps
+                          # slowly (only the 1% global moves can seed the first edges),
+                          # so equilibrium needs ~250-300 sweeps (auto-detected below)
+cpp_mode      = 1         # C++ track: 0 = scalar, 1 = + intra-step prefetch (same output)
+
+[work]
+# We benchmark TIME TO EQUILIBRIUM: each cell grows one graph from empty and times
+# the whole run to its final equilibrium — no warm/measure split, no mid-run polling
+# (that would dilute the timing). The report-to-GUI cadence is per finished cell.
+# equilibrium_sweeps: steps per cell = this × N. 0 = auto-detect once at startup
+# (grow a probe graph until the average degree plateaus, then add a safety margin)
+# for the chosen (mean_degree, locality_bias, temperature).
+equilibrium_sweeps = 0
+reps_per_cell      = 1    # repeat each (N, group, track) cell this many times; report the median
+
+[schedule]
+n_start   = 8             # start tiny: at N=8 a simple graph can't exceed degree 7, so
+                          # avg degree caps below k=8 — the table shows that phase boundary
+n_factor  = 2             # multiply N by this each round
+n_max     = 0             # 0 = auto: grow until even ONE worker won't fit (RAM−reserve)
+max_concurrency = 0       # 0 = up to every logical core; or cap it (e.g. 16)
+# The single-core pass is run in full (every core individually) only for the first
+# `full_percore_rounds` sizes — enough to establish the per-core pattern. After that,
+# concurrency-1 runs only the fastest and slowest core (the V-Cache vs non-V-Cache
+# representatives), not all of them, since within a cache class the cores are equal.
+full_percore_rounds = 8
+# coverage: which core-groups to run at each concurrency level ≥ 2.
+#   "disjoint"       — every disjoint group of that size (full per-core map; slowest)
+#   "representative" — one group per distinct cache class (e.g. V-Cache CCD vs normal)
+#   "first"          — just the first group (fastest; still expands the ladder)
+coverage  = "disjoint"
+
+[cpu]
+physical_only   = false   # true = ignore SMT siblings (use one logical CPU per physical core)
+restrict_cores  = []      # [] = all cores in the affinity mask; else e.g. [0,1,2,3]
+vcache_first    = true    # order cores so the V-Cache CCD (bigger L3) is profiled first
+pin             = true    # pin each worker to its core (needs Linux; falls back to unpinned)
+
+[memory]
+reserve_gb = 4.0          # keep at least this much RAM free; the gate never starts a
+                          # batch that would dip below it (this is what shrinks the
+                          # worker count under pressure)
+safety     = 1.30         # multiply the modelled per-worker footprint by this when gating
+
+[tracks]
+run_python = true         # the Numba engine (reference)
+run_cpp    = true         # the C++ engine (engine_core.cpp, auto-compiled with g++/clang++)
+run_rust   = true         # the Rust engine (engine_core.rs, auto-compiled with rustc if present)
+validate   = true         # at the smallest N: confirm cpp & rust are bit-identical to each
+                          # other and match the Numba engine's degree distribution, and that
+                          # the handed-back array construct is identical
+
+[output]
+dir       = "output/mem_bench"
+csv       = "memory_benchmark.csv"
+json      = "memory_benchmark.json"
+html      = "memory_benchmark.html"
+title     = "Graph-growth engine — time-to-equilibrium benchmark (Numba vs C++ vs Rust)"
