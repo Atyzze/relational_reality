@@ -34,7 +34,6 @@ import sys
 import time
 import datetime
 import webbrowser
-from concurrent.futures import ProcessPoolExecutor
 
 HERE = os.path.dirname(os.path.abspath(__file__))   # .../src/benchmarks
 SRC = os.path.dirname(HERE)                          # .../src
@@ -45,7 +44,6 @@ for _p in (SRC, ROOT):
 
 from engines import get_engine, available_engines, ensure_built   # noqa: E402
 from engines import build as _engbuild                            # noqa: E402
-from benchmarks.eta_model import project_milestones, EtaSmoother, NOMINAL_DRAM  # noqa: E402
 
 # benchmark track label -> engine backend, and the Hamiltonian knobs we forward
 _BACKEND = {"py": "numba", "cpp": "cpp", "rust": "rust"}
@@ -66,8 +64,8 @@ DEFAULTS = {
     "engine": dict(max_degree=32, degree_penalty=0.05, temperature=0.004,
                    edge_cost=-1.0, locality_bias=0.99, cpp_mode=1, mean_degree=8),
     "work": dict(equilibrium_sweeps=0, reps_per_cell=1),
-    "schedule": dict(n_start=32, n_factor=2, n_max=0, max_concurrency=0,
-                     full_percore_rounds=8, coverage="disjoint"),
+    "phases": dict(n_start=8, budget_s=0.5, warm_cap_s=45, solo_n_max=0,
+                   smt_threshold=0.30, l3_threshold=0.10),
     "cpu": dict(physical_only=False, restrict_cores=[], vcache_first=True, pin=True),
     "memory": dict(reserve_gb=4.0, safety=1.30),
     "tracks": dict(run_python=True, run_cpp=True, run_rust=True, validate=True),
@@ -215,85 +213,23 @@ def detect_equilibrium_sweeps(eng, prefer, log=print):
     cls = get_engine(_BACKEND.get(prefer, "numba"))
     return _engbuild.detect_equilibrium_sweeps(cls, _params(eng),
                                                max_degree=eng["max_degree"], log=log)
-# schedule
-def conc_ladder(total, cap):
-    out, c = [], 1
-    while c <= total:
-        out.append(c); c *= 2
-    if total not in out:
-        out.append(total)
-    if cap and cap > 0:
-        out = [c for c in out if c <= cap]
-    return out
-
-
-def percore_groups(cores, topo, round_idx, full_rounds):
-    if round_idx < full_rounds:
-        return [(c,) for c in cores]
-    reps = []
-    for g in sorted(topo["groups"], key=lambda g: (not g.get("is_vcache"), g["id"])):
-        for cpu in g["cpus"]:
-            if cpu in cores:
-                reps.append((cpu,)); break
-    return reps or [(cores[0],)]
-
-
-def groups_of(cores, c, coverage, topo):
-    full = [tuple(cores[i:i + c]) for i in range(0, len(cores) - c + 1, c)]
-    if not full:
-        return []
-    if coverage == "first":
-        return full[:1]
-    if coverage == "representative":
-        picked, seen = [], set()
-        for g in full:
-            sig = tuple(sorted(set(ccd_of(topo, x) for x in g)))
-            if sig not in seen:
-                seen.add(sig); picked.append(g)
-        return picked
-    return full
-
-
-def build_schedule(cfg, topo, avail, base_rss, eq_sweeps):
-    cores = ordered_cores(topo, cfg)
-    total = len(cores)
-    md = cfg["engine"]["max_degree"]
-    reserve = int(cfg["memory"]["reserve_gb"] * 1024**3)
-    safety = cfg["memory"]["safety"]
-    sched = cfg["schedule"]
-    ladder_all = conc_ladder(total, sched["max_concurrency"])
-    full_rounds = sched["full_percore_rounds"]
-    budget = max(0, avail - reserve)
-    N = int(sched["n_start"]); rounds = []; round_idx = 0
-    while True:
-        need1 = per_worker_bytes(N, md, base_rss, safety)
-        if need1 > budget:
-            break
-        max_c_mem = max(1, budget // need1)
-        ladder = [c for c in ladder_all if c <= max_c_mem]
-        working_set = N * (md * 4 + 4)
-        steps = eq_sweeps * N
-        stages = []
-        for c in ladder:
-            grps = percore_groups(cores, topo, round_idx, full_rounds) if c == 1 \
-                else groups_of(cores, c, sched["coverage"], topo)
-            for g in grps:
-                stages.append(dict(N=N, conc=c, group=list(g), working_set=working_set,
-                                   need_per_worker=need1, steps=steps))
-        rounds.append(dict(N=N, max_c_mem=int(max_c_mem), ladder=ladder, stages=stages))
-        nmax = sched["n_max"]
-        if nmax and N >= nmax:
-            break
-        N = int(N * sched["n_factor"]); round_idx += 1
-    return cores, rounds
-
+# (the schedule lives in benchmarks.topo_bench now: phase-structured —
+#  solo per-core map → MEASURED grouping → packed/spread scaling →
+#  language compare — instead of the old flat N×group×track ladder)
 
 # workers
 def _pin(core):
+    """Pin the CURRENT process to one logical CPU. Attempted
+    unconditionally: pool workers are REUSED across cells, so after the
+    first pin the process's affinity mask has shrunk to {prev_core} — the
+    old `if core in sched_getaffinity(0)` guard then silently no-opped
+    every later pin and EVERY solo cell ran on the first core (one busy
+    core in btop, identical rows in the per-core map). Pinning to a core
+    outside the cgroup/cpuset raises OSError, which is caught — that was
+    the only thing the guard protected against."""
     if core is not None and hasattr(os, "sched_setaffinity"):
         try:
-            if core in os.sched_getaffinity(0):
-                os.sched_setaffinity(0, {core})
+            os.sched_setaffinity(0, {core})
         except OSError:
             pass
 
@@ -479,30 +415,6 @@ def _load_prior_results(cfg):
         return []
 
 
-# The ETA model lives in eta_model.py (project_milestones / EtaSmoother / NOMINAL_DRAM):
-# pure-stdlib and unit-tested in test_eta_stability.py, so its stability can be verified
-# without a multi-day run. run()'s milestones_now() calls project_milestones directly.
-
-
-_ROUND_MILE_SEEN = set()
-
-
-def _print_round_milestone(N, m):
-    if N in _ROUND_MILE_SEEN:
-        return
-    _ROUND_MILE_SEEN.add(N)
-    bits = [f"remaining ~{fmt_dur(m['t_total'])} (\u00b1{fmt_dur(m['t_total_hi'] - m['t_total'])})"]
-    if m["drop_N"] is None:
-        bits.append(f"{m['max_conc']} workers fit throughout (no taper)")
-    elif m.get("t_to_drop"):
-        bits.append(f"{m['max_conc']} workers hold until N={fmt_int(m['drop_N'])} "
-                    f"(~{fmt_dur(m['t_to_drop'])}), then taper to {m['fill_c']}")
-    else:
-        bits.append("workers tapering (RAM-limited)")
-    bits.append(f"final N={fmt_int(m['final_N'])} c={m['final_c']} cell ~{fmt_dur(m['final_secs'])}")
-    print(f"{_ts()}  \u2500\u2500 N={fmt_int(N)} \u2500\u2500 " + "; ".join(bits), flush=True)
-
-
 # CPU package power via RAPL (best-effort; energy_uj is often root-only since PLATYPUS)
 _RAPL_PATHS = None
 
@@ -561,221 +473,12 @@ def _watts(r0, r1, secs):
 
 
 def run(cfg, dry=False, sim_cores=0, sim_ram_gb=0.0, open_browser=True):
-    topo = detect_topology()
-    if sim_cores:
-        half = sim_cores // 2
-        topo = dict(model=f"(simulated {sim_cores} logical)", mask=list(range(sim_cores)),
-                    n_logical=sim_cores, physical=list(range(0, sim_cores, 2)),
-                    groups=[dict(id=0, cpus=list(range(0, half)), l3_bytes=96 * 1024**2, is_vcache=True),
-                            dict(id=1, cpus=list(range(half, sim_cores)), l3_bytes=32 * 1024**2, is_vcache=False)])
-    if sim_ram_gb and sim_ram_gb > 0:
-        avail = int(sim_ram_gb * 1024**3)
-    elif sim_cores:
-        avail = int(90 * 1024**3)
-    else:
-        avail = mem_available() or mem_total()
-    total_ram = avail if (sim_cores or sim_ram_gb) else mem_total()
-
-    ensure_natives(cfg)
-    eng = cfg["engine"]; md = eng["max_degree"]
-    trks = tracks_for(cfg) or ["py"]
-    prefer = "cpp" if "cpp" in trks else ("rust" if "rust" in trks else "py")
-
-    if not dry:
-        if eng.get("mean_degree", 0) and eng["mean_degree"] > 0:
-            eng["degree_penalty"] = calibrate_degree_penalty(eng, eng["mean_degree"], prefer, sweeps=400)
-        eq_sweeps = cfg["work"]["equilibrium_sweeps"] or detect_equilibrium_sweeps(eng, prefer)
-        if cfg["tracks"]["validate"]:
-            verify_tracks(cfg, eng, eq_sweeps)
-        base_rss = warm_base_rss(cfg, eng)
-    else:
-        eq_sweeps = cfg["work"]["equilibrium_sweeps"] or (300 if eng["locality_bias"] >= 0.95 else 30)
-        base_rss = max(180 * 1024**2 if cfg["tracks"]["run_python"] else 0, 30 * 1024**2)
-
-    cores, rounds = build_schedule(cfg, topo, avail, base_rss, eq_sweeps)
-
-    print(f"\nCPU: {topo.get('model')}  -  {topo['n_logical']} logical "
-          f"-  {len(topo['groups'])} L3 group(s) "
-          f"{'(V-Cache detected)' if any(g['is_vcache'] for g in topo['groups']) else ''}")
-    print(f"RAM: total {fmt_bytes(total_ram)} - available {fmt_bytes(avail)} - "
-          f"reserve {cfg['memory']['reserve_gb']} GiB - per-worker base ~ {fmt_bytes(base_rss)}")
-    print(f"tracks: {trks}   equilibrium: {eq_sweeps} sweeps/cell   "
-          f"params: k={eng.get('mean_degree')} mu={eng['degree_penalty']:.4f} "
-          f"T={eng['temperature']} lb={eng['locality_bias']} max_degree={md}")
-    n_stage = sum(len(r["stages"]) for r in rounds)
-    reps = max(1, cfg["work"]["reps_per_cell"])
-    n_cells = n_stage * len(trks) * reps
-    print(f"schedule: {len(rounds)} size-rounds, N {rounds[0]['N'] if rounds else '-'} -> "
-          f"{rounds[-1]['N'] if rounds else '-'}, {n_stage} stages, {n_cells} cells\n")
-    for r in rounds:
-        ws = r["stages"][0]["working_set"] if r["stages"] else 0
-        nw = fmt_bytes(r['stages'][0]['need_per_worker']) if r['stages'] else '-'
-        print(f"  N={fmt_int(r['N']):>14}  working set {fmt_bytes(ws):>9}  "
-              f"per-worker {nw:>9}  fits <={r['max_c_mem']:>4} workers  ->  "
-              f"concurrency {'+'.join(map(str, r['ladder']))}")
-    if rounds:
-        last = rounds[-1]
-        print(f"\n  terminal: largest size fitting one worker is N={fmt_int(last['N'])} "
-              f"(~{fmt_bytes(last['stages'][0]['need_per_worker'])}/worker); "
-              f"next x{cfg['schedule']['n_factor']} would swap.")
-    if dry:
-        nominal = NOMINAL_DRAM
-        total_stage_N = reps * sum(st["N"] for r in rounds for st in r["stages"])
-        eta = sum(eq_sweeps * total_stage_N / nominal.get(t, 3e6) for t in trks)
-        print(f"\n[dry-run] no cells executed. Rough ETA at nominal DRAM rates: ~{fmt_dur(eta)} "
-              f"({fmt_int(eq_sweeps * total_stage_N)} steps/track).")
-        return None
-
-    results = []
-    pool = ProcessPoolExecutor(max_workers=max(2, len(cores)), initializer=_init_worker)
-    t_start = time.time()
-    total_stage_N = reps * sum(st["N"] for r in rounds for st in r["stages"])
-    done_N = {t: 0 for t in trks}
-    rate_maxN = {t: None for t in trks}
-    seen_maxN = {t: 0 for t in trks}
-
-    # ── resume ───────────────────────────────────────────────
-    # Pick up where a previous run stopped instead of recomputing all of it.
-    # Load the prior records, seed `results` with them (the report is a full
-    # rewrite of `results`, so every earlier cell is preserved), and skip any
-    # cell whose (N, conc, track, group) key is already on disk.
-    done_keys = set()
-    _prior = _load_prior_results(cfg)
-    if _prior:
-        results.extend(_prior)
-        for _r in _prior:
-            done_keys.add(_cell_key(_r.get("N"), _r.get("conc"),
-                                    _r.get("track"), _r.get("group")))
-        for _t in trks:
-            _tr = [r for r in _prior
-                   if r.get("track") == _t and r.get("per_worker_m_steps_s")]
-            if _tr:
-                _top = max(_tr, key=lambda r: r.get("N", 0))
-                seen_maxN[_t] = _top["N"]
-                rate_maxN[_t] = _top["per_worker_m_steps_s"] * 1e6
-        print(f"{_ts()}  resume: {len(done_keys)} cells already on disk will "
-              f"be skipped; appending new work.")
-        print(f"           reset = delete "
-              f"{os.path.join(ROOT, cfg['output']['dir'])}/ and run again.\n")
-
-    meta = dict(model=topo.get("model"), n_logical=topo["n_logical"], groups=topo["groups"],
-                cores=cores, tracks=trks, total_ram=total_ram, available=avail,
-                reserve_gb=cfg["memory"]["reserve_gb"], base_rss=base_rss,
-                params=dict(mean_degree=eng.get("mean_degree"), degree_penalty=eng["degree_penalty"],
-                            temperature=eng["temperature"], locality_bias=eng["locality_bias"],
-                            max_degree=md, equilibrium_sweeps=eq_sweeps),
-                cells_total=n_cells, cells_done=0, running=True, elapsed_s=0.0, eta_s=None)
-    _last = [0.0]
-    eta_smoother = EtaSmoother()                    # one smoother for the whole run; project_milestones applies it
-
-    def milestones_now():
-        # Delegates to the unit-tested eta_model. elapsed lets it calibrate the
-        # remaining estimate against real time once enough cells are measured.
-        return project_milestones(rounds, results, reps, eq_sweeps, trks,
-                                  eta_smoother, md, elapsed=time.time() - t_start)
-
-    def flush(done, force=False, running=True, m=None):
-        now = time.time()
-        if not force and now - _last[0] < 3.0:
-            return
-        _last[0] = now
-        meta["elapsed_s"] = now - t_start; meta["cells_done"] = done
-        meta["running"] = running
-        _m = m if m is not None else milestones_now()   # reuse the cell's milestone to avoid double-smoothing
-        meta["eta_s"] = _m["t_total"] if _m else None   # already smoothed inside project_milestones
-        meta["milestones"] = _m
-        try:
-            write_outputs(cfg, meta, results, quiet=True)
-        except Exception as ex:
-            print(f"[warn] report write failed: {ex}")
-
-    flush(0, force=True)
-    if open_browser:
-        _open_report(cfg)
-    done = 0
-    try:
-        from multiprocessing import Manager
-        mgr = Manager()
-        _ROUND_MILE_SEEN.clear()
-        for r in rounds:
-            N = r["N"]; steps = eq_sweeps * N
-            _rm = milestones_now()
-            if _rm:
-                _print_round_milestone(N, _rm)
-            for st in r["stages"]:
-                c = st["conc"]; group = st["group"]
-                for track in trks:
-                    if _cell_key(N, c, track, group) in done_keys:
-                        done += reps              # keep [done/n_cells] honest
-                        done_N[track] += reps * N
-                        flush(done)
-                        continue
-                    recs = []
-                    cell_secs = 0.0; cell_energy_j = 0.0; energy_ok = True
-                    for rep in range(reps):
-                        barrier = mgr.Barrier(c) if c > 1 else None
-                        seeds = [1000 * rep + 7 * i + 1 for i in range(c)]
-                        jobs = [(track, N, steps, seeds[i],
-                                 (group[i] if cfg["cpu"]["pin"] else None),
-                                 eng, eng["cpp_mode"], barrier) for i in range(c)]
-                        _e0 = _rapl_read(); _t0 = time.perf_counter()
-                        recs.extend(pool.map(worker, jobs))
-                        _dt = time.perf_counter() - _t0; _e1 = _rapl_read()
-                        cell_secs += _dt
-                        _w = _watts(_e0, _e1, _dt)
-                        if _w is None:
-                            energy_ok = False
-                        else:
-                            cell_energy_j += _w * _dt
-                        done += 1; done_N[track] += N
-                    watts = (cell_energy_j / cell_secs) if (energy_ok and cell_secs > 0 and cell_energy_j > 0) else None
-                    ok = [x for x in recs if "error" not in x]
-                    if not ok:
-                        print(f"{_ts()}  N={fmt_int(N):>12} c={c:>2} {track:>4} grp{group}: SKIP "
-                              f"({recs[0].get('error','?') if recs else '?'})")
-                        flush(done); continue
-                    nsv = [x["ns_step"] for x in ok]
-                    med_ns = statistics.median(nsv)
-                    per_worker_mst = statistics.median([x["m_steps_s"] for x in ok])
-                    # TRUE aggregate: the cell ends only when its SLOWEST worker does, so
-                    # honest throughput is c * (steps / max_worker_time) = c * 1e3/ns_step_max.
-                    # The old per_worker_median * c is kept as ..._peak (it overstates when spread is high).
-                    agg_true = c * 1e3 / max(nsv) if max(nsv) else 0.0
-                    if N >= seen_maxN[track]:
-                        seen_maxN[track] = N; rate_maxN[track] = per_worker_mst * 1e6
-                    rec = dict(N=N, conc=c, group=group, track=track, working_set=st["working_set"],
-                               ns_step_med=med_ns, ns_step_min=min(nsv), ns_step_max=max(nsv),
-                               per_worker_m_steps_s=per_worker_mst,
-                               aggregate_m_steps_s=agg_true,
-                               aggregate_peak_m_steps_s=per_worker_mst * c,
-                               seconds_med=statistics.median([x["seconds"] for x in ok]),
-                               avg_deg=statistics.median([x["avg_deg"] for x in ok]),
-                               peak=max(x["peak"] for x in ok),
-                               rss_per_worker=statistics.median([x["rss_bytes"] for x in ok]),
-                               ccds=sorted(set(ccd_of(topo, x.get("cpu")) for x in ok if x.get("cpu") is not None)),
-                               watts=watts)
-                    results.append(rec)
-                    spread = (max(nsv) - min(nsv)) / med_ns * 100 if med_ns else 0
-                    m = milestones_now()                    # t_total is already smoothed by eta_model
-                    wstr = f"  {watts:4.0f}W" if watts else ""
-                    etastr = ""
-                    if m and m["t_total"]:
-                        etastr = f"  ETA {fmt_dur(m['t_total'])} \u00b1{fmt_dur(m['t_total_hi'] - m['t_total'])}"
-                        if m.get("t_to_drop"):
-                            etastr += f" (taper to {m['fill_c']} in {fmt_dur(m['t_to_drop'])})"
-                    print(f"{_ts()}  N={fmt_int(N):>12} c={c:>2} {track:>4} grp{str(group):<14} "
-                          f"{med_ns:7.1f} ns/step  per-wkr {per_worker_mst:6.2f} Msteps/s  "
-                          f"agg {agg_true:7.2f} Msteps/s \u2248 {_gbps(agg_true):5.1f} GB/s  "
-                          f"spread {spread:4.1f}%  "
-                          f"avgdeg {rec['avg_deg']:.1f}{wstr}  [{done}/{n_cells}]{etastr}")
-                    flush(done, m=m)
-    finally:
-        pool.shutdown(wait=True)
-    flush(done, force=True, running=False)
-    print(f"\nwrote report to {os.path.join(ROOT, cfg['output']['dir'])}/ (csv, json, html) - "
-          f"elapsed {fmt_dur(meta['elapsed_s'])}")
-    _scaling_console(results, meta)
-    return results
+    """Entry point kept stable for main.py bench; the phase-structured run
+    itself lives in benchmarks.topo_bench (solo per-core map → measured
+    grouping → packed/spread scaling → language compare)."""
+    from benchmarks import topo_bench
+    return topo_bench.run(cfg, dry=dry, sim_cores=sim_cores,
+                          sim_ram_gb=sim_ram_gb, open_browser=open_browser)
 
 
 # reporting

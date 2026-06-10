@@ -152,6 +152,102 @@ def _report_thread_caps():
 # mu_table.json); fail sidecars live in FLOW_DIR next to the (absent) CSV.
 MU_FAILURES_JSON = "mu_failures.json"
 
+# Append-only ledger of sweep sessions (output root). One record per process
+# run: {"start", "last", "workers", "pid"}. Past records are never modified;
+# only the live record's "last" heartbeat is updated. Total wall-clock across
+# every session — reboots and restarts included — is then Σ(last − start),
+# the ABSOLUTE time reference the ETA is anchored to (raw system time, not
+# per-core accounting).
+SESSIONS_JSON = "sessions.json"
+_SESSION_IDX = [None]
+
+
+def _sessions_load():
+    try:
+        with open(SESSIONS_JSON) as fh:
+            d = json.load(fh)
+        return d if isinstance(d, list) else []
+    except (OSError, ValueError):
+        return []
+
+
+def _sessions_write(sess):
+    tmp = f"{SESSIONS_JSON}.tmp.{os.getpid()}"
+    try:
+        with open(tmp, "w") as fh:
+            json.dump(sess, fh)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, SESSIONS_JSON)
+    finally:
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+
+def session_begin(n_workers):
+    """Append this process run to sessions.json and remember its index."""
+    sess = _sessions_load()
+    now = time.time()
+    sess.append({"start": now, "last": now, "workers": int(n_workers),
+                 "pid": os.getpid()})
+    _SESSION_IDX[0] = len(sess) - 1
+    _sessions_write(sess)
+
+
+_SESSION_CORE_S = [0.0]
+
+
+def session_add_core(wall_s):
+    """Credit core-seconds of a cell COMPLETED THIS SESSION to the live
+    ledger record (flushed with the next heartbeat). κ must compare like
+    with like: core-seconds earned during ledgered wall time only —
+    historical metas predate sessions.json, so mixing them into the
+    numerator against a young ledger denominator made κ explode (it was
+    only the n_workers·1.25 clamp keeping the ETA merely optimistic
+    instead of absurd)."""
+    try:
+        _SESSION_CORE_S[0] += max(0.0, float(wall_s))
+    except (TypeError, ValueError):
+        pass
+
+
+def session_beat():
+    """Refresh the live record's heartbeat + earned core-seconds (called
+    with each status write)."""
+    if _SESSION_IDX[0] is None:
+        return
+    sess = _sessions_load()
+    if _SESSION_IDX[0] < len(sess):
+        sess[_SESSION_IDX[0]]["last"] = time.time()
+        sess[_SESSION_IDX[0]]["core_s"] = round(_SESSION_CORE_S[0], 1)
+        _sessions_write(sess)
+
+
+def sessions_kappa():
+    """Measured effective parallelism κ = Σcore_s / Σwall over ledger
+    records that carry core_s. Returns None until ≥120 s of qualifying
+    wall exists — pre-core_s (legacy) records are excluded from BOTH
+    sums, so prior runs that captured time differently can no longer
+    skew the ratio."""
+    core = wall = 0.0
+    for r in _sessions_load():
+        if "core_s" not in r:
+            continue
+        core += float(r.get("core_s") or 0.0)
+        wall += max(0.0, float(r.get("last", 0)) - float(r.get("start", 0)))
+    if wall <= 120 or core <= 0:
+        return None
+    return core / wall
+
+
+def sessions_wall_seconds():
+    """Total wall-clock the sweep has EVER spent running, all sessions."""
+    return sum(max(0.0, float(r.get("last", 0)) - float(r.get("start", 0)))
+               for r in _sessions_load())
+
 
 def _classify_fail_reason(msg):
     """Bucket a failure message into a glyph category. 'max_degree' is the
@@ -350,7 +446,7 @@ def _work_N(w):
     return w[4] if w[0] == "cell" else w[2]
 
 
-def estimate_eta_seconds(done_samples, remaining_Ns, n_workers):
+def estimate_eta_seconds(done_samples, remaining_Ns, n_workers, kappa=None):
     """Wall-clock ETA (seconds) for the remaining work.
 
     The naive "remaining ÷ average rate" estimate is badly wrong here:
@@ -368,6 +464,16 @@ def estimate_eta_seconds(done_samples, remaining_Ns, n_workers):
 
     Returns None until there are enough samples (≥3 over ≥2 distinct N) to
     fit a trend; the caller then just omits the ETA.
+
+    `kappa` is the MEASURED effective parallelism: completed core-seconds
+    (Σ wall_s over every finished cell, all sessions) divided by total
+    wall-clock from sessions.json. Dividing the predicted remaining
+    core-seconds by κ anchors the ETA to raw system time — dispatch gaps,
+    calibration passes, figure refreshes, partially idle tails and restarts
+    are all priced in automatically, because κ is exactly the rate at which
+    THIS deployment has historically converted wall time into finished cell
+    time. Falls back to the optimistic ÷n_workers only when there is not
+    yet enough history to measure κ.
     """
     if not remaining_Ns:
         return 0
@@ -391,7 +497,8 @@ def estimate_eta_seconds(done_samples, remaining_Ns, n_workers):
         return None
     preds = [predict(n) for n in remaining_Ns]
     total_cpu_s = sum(preds)
-    wall = total_cpu_s / max(1, n_workers)
+    div = kappa if (kappa and kappa > 0) else max(1, n_workers)
+    wall = total_cpu_s / div
     return int(max(wall, max(preds, default=0)))
 
 
@@ -596,8 +703,26 @@ def _refresh_shape_analysis():
     except Exception as e:
         print(f"  [isotropy] heatmap refresh skipped: {type(e).__name__}: {e}",
               flush=True)
-    # Heavier N->infinity convergence pass + its leaderboard charts, on a
-    # slower throttle (only meaningful once cells have several N).
+    # Leaderboard charts (flow_map / flow_scatter) redraw HERE, on the same
+    # fast cadence as the heatmaps above, from whatever flow_convergence.csv
+    # is currently on disk — cheap (one CSV read + two figures), and immune
+    # to the heavy recompute below ever failing or lagging. Previously the
+    # charts only redrew behind the heavy throttle, so they went stale
+    # relative to every other PNG.
+    if os.path.exists("flow_convergence.csv"):
+        try:
+            import contextlib
+            import io
+            import flow_charts
+            with contextlib.redirect_stdout(io.StringIO()):
+                flow_charts.main(["--csv", "flow_convergence.csv"])
+            print("  \u21bb flow charts redrawn (flow_map/flow_scatter)",
+                  flush=True)
+        except Exception as e:
+            print(f"  [flow_charts] redraw skipped: {type(e).__name__}: {e}",
+                  flush=True)
+    # Heavier N->infinity convergence RECOMPUTE (rewrites the csv), on its
+    # own slower throttle (only meaningful once cells have several N).
     _maybe_refresh_flow_convergence()
 
 
@@ -663,12 +788,8 @@ def _maybe_refresh_flow_convergence():
         import flow_convergence
         with contextlib.redirect_stdout(io.StringIO()):
             flow_convergence.main(["--dir", "."])
-        if os.path.exists("flow_convergence.csv"):
-            import flow_charts
-            with contextlib.redirect_stdout(io.StringIO()):
-                flow_charts.main(["--csv", "flow_convergence.csv"])
-            print("  \u21bb flow convergence + charts refreshed "
-                  "(flow_convergence.csv + flow_map/flow_scatter)", flush=True)
+        print("  \u21bb flow_convergence.csv recomputed (charts redraw on "
+              "the fast cadence)", flush=True)
     except Exception as e:
         print(f"  [flow_convergence] refresh skipped: "
               f"{type(e).__name__}: {e}", flush=True)
@@ -702,6 +823,8 @@ def build_status(phase, started_at, n_total, n_done, n_failed,
                  calibration=None,
                  eta_sec_override=None,
                  compute_spent_sec=None,
+                 wall_total_sec=None,
+                 kappa=None,
                  cells_done_session=None):
     """Assemble a status dict for write_status_json.
 
@@ -775,6 +898,9 @@ def build_status(phase, started_at, n_total, n_done, n_failed,
         "rate_per_min": round(rate, 2) if rate else None,
         "eta_sec": round(eta_final) if eta_final else None,
         "eta_warning": eta_warning,
+        "wall_total_sec": round(wall_total_sec) if wall_total_sec else None,
+        "kappa": round(kappa, 2) if kappa else None,
+        "n_sessions": len(_sessions_load()) or None,
         "mu_failures": _MU_FAIL_COUNT[0],
         "last_cell": last_cell,
         "next_cell": (
@@ -790,6 +916,7 @@ def build_status(phase, started_at, n_total, n_done, n_failed,
 
 
 def write_status_json(path, status):
+    session_beat()   # keep sessions.json's wall-clock ledger live
     """Atomic write: dump to .tmp then rename. Avoids partial-read
     races where the dashboard polls mid-write."""
     tmp = path + ".tmp"
@@ -1696,6 +1823,10 @@ def main(argv=None):
         except (AttributeError, OSError):
             n_workers = os.cpu_count() or 1
     n_workers = min(n_workers, max(1, len(work)))   # don't over-allocate
+    # Open this process's record in the append-only sessions ledger so total
+    # wall-clock survives restarts and the ETA stays anchored to real time
+    # (raw system seconds, not per-core accounting).
+    session_begin(n_workers)
 
     n_torus_work = sum(1 for w in work if w[0] == "torus")
     n_cell_work = sum(1 for w in work if w[0] == "cell")
@@ -1706,12 +1837,38 @@ def main(argv=None):
           flush=True)
 
     # Initial status — phase=running, in_flight empty until pool starts
-    write_status_json(args.status_json, build_status(
-        phase="running",
-        started_at=t_total,
-        n_total=len(cells) * len(seed_list), n_done=n_done, n_failed=n_failed,
-        in_flight=[],
-    ))
+    def _running_status(in_flight_list, last_cell=None):
+        """The ONE way a 'running' status is assembled. Every field that
+        keeps the banner honest is computed here: session-scoped rate
+        (resume-skipped cells never count as session work), the
+        κ-anchored ETA (κ from sessions.json core_s/wall — like-for-like
+        across restarts), and the wall/κ telemetry. The post-planning
+        write used to omit all of these, so a resumed sweep showed
+        rate = cached_cells ÷ ~1 s ("363,517 cells/min · ETA 3s") until
+        the first real completion — minutes of nonsense at 64k."""
+        _core_done = sum(w for _, w in eta_done_samples)
+        kappa = sessions_kappa()
+        if kappa is not None:
+            kappa = min(kappa, n_workers * 1.25)
+        eta = estimate_eta_seconds(
+            eta_done_samples,
+            list(eta_remaining.elements()),
+            n_workers, kappa=kappa)
+        return build_status(
+            phase="running",
+            started_at=t_total,
+            n_total=len(cells) * len(seed_list),
+            n_done=n_done, n_failed=n_failed,
+            last_cell=last_cell,
+            in_flight=in_flight_list,
+            eta_sec_override=eta,
+            compute_spent_sec=_core_done,
+            wall_total_sec=sessions_wall_seconds(),
+            kappa=kappa,
+            cells_done_session=max(0, n_done - cached_cell_count),
+        )
+
+    write_status_json(args.status_json, _running_status([]))
 
     if not work:
         # Everything was cached — nothing to dispatch, fall through
@@ -1851,6 +2008,7 @@ def main(argv=None):
                         _wall = result.get("wall_s")
                         if _wall and _wall > 0:
                             eta_done_samples.append((_work_N(w), _wall))
+                            session_add_core(_wall)
 
                         if w[0] == "cell":
                             _, k, T, lb, N, seed = w
@@ -1916,32 +2074,12 @@ def main(argv=None):
                                                   cancel_futures=True)
                                 restart_self(
                                     reason, args.status_json,
-                                    build_status(
-                                        phase="running",
-                                        started_at=t_total,
-                                        n_total=len(cells) * len(seed_list),
-                                        n_done=n_done,
-                                        n_failed=n_failed,
-                                        in_flight=in_flight_list,
-                                    ))
+                                    _running_status(in_flight_list))
                                 # restart_self does not return on success
                             last_source_check = time.time()
 
-                        eta = estimate_eta_seconds(
-                            eta_done_samples,
-                            list(eta_remaining.elements()),
-                            n_workers)
-                        _status = build_status(
-                            phase="running",
-                            started_at=t_total,
-                            n_total=len(cells) * len(seed_list),
-                            n_done=n_done, n_failed=n_failed,
-                            last_cell=last_cell_persistent,
-                            in_flight=in_flight_list,
-                            eta_sec_override=eta,
-                            compute_spent_sec=sum(w for _, w in eta_done_samples),
-                            cells_done_session=max(0, n_done - cached_cell_count),
-                        )
+                        _status = _running_status(
+                            in_flight_list, last_cell=last_cell_persistent)
                         write_status_json(args.status_json, _status)
                         # Surface grid infeasibility on the console too, not
                         # just in the polled JSON — throttled so it nags

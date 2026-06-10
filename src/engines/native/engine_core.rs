@@ -152,6 +152,12 @@ pub extern "C" fn engine_create(n: i32, max_degree: i32, seed: u64) -> *mut c_vo
         n: n as usize,
         md,
         max_degree,
+        // NB: no MADV_HUGEPAGE here, deliberately — this file is built with
+        // bare rustc (no cargo, no libc crate), so the madvise syscall isn't
+        // reachable without hand-rolled FFI that would complicate the
+        // single-file build. The cpp track carries the hugepage hint; on
+        // systems with THP=always the kernel backs these Vecs with huge
+        // pages anyway. Revisit only if the rust track must win at N ≥ ~16M.
         nb: vec![-1i32; (n as usize) * md],
         deg: vec![0i32; n as usize],
         peak: 0,

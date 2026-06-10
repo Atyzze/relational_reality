@@ -147,11 +147,18 @@ void* engine_create(int32_t N, int32_t max_degree, uint64_t seed) {
     e->rng.s = seed ? seed : 0x9E3779B97F4A7C15ull;
     size_t nb_bytes  = (size_t)N * max_degree * sizeof(int32_t);
     size_t deg_bytes = (size_t)N * sizeof(int32_t);
-    e->nb  = (int32_t*)malloc(nb_bytes);
+    // Neighbour rows are the hot random-access target: align the table to a
+    // 64-byte cache line so a row never straddles lines it doesn't need
+    // (max_degree*4 is a multiple of 64 for md∈{16,32,…}, making each row
+    // exactly 1–2 whole lines). posix_memalign memory is free()-compatible.
+    void* nb_raw = nullptr;
+    if (posix_memalign(&nb_raw, 64, nb_bytes) != 0) nb_raw = nullptr;
+    e->nb  = (int32_t*)nb_raw;
     e->deg = (int32_t*)malloc(deg_bytes);
     if (!e->nb || !e->deg) { free(e->nb); free(e->deg); free(e); return nullptr; }
 #if defined(__linux__) && defined(MADV_HUGEPAGE)
-    madvise(e->nb, nb_bytes, MADV_HUGEPAGE);
+    madvise(e->nb, nb_bytes, MADV_HUGEPAGE);   // fewer TLB misses at big N
+    madvise(e->deg, deg_bytes, MADV_HUGEPAGE);
 #endif
     memset(e->nb, 0xFF, nb_bytes);   // int32 -1
     memset(e->deg, 0, deg_bytes);

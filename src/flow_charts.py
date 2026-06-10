@@ -107,26 +107,58 @@ def map_fig(rows, out):
 def scatter_fig(rows, out):
     fig, ax = plt.subplots(figsize=(9, 6))
     Ts = sorted({r["T"] for r in rows})
-    cmap = {T: c for T, c in zip(Ts, ["#4ec9b0","#9cdcfe","#dcdcaa","#f48771"])}
+    # full-rainbow gradient over T, like the HTML flow explorer's colour
+    # ramp: turbo sampled at len(Ts) points — any number of temperatures
+    # gets a distinct, ORDERED colour (cold→hot), instead of a fixed
+    # 4-entry list that zip() silently truncated (the bug that froze this
+    # figure the moment a 5th T entered the csv).
+    import matplotlib.cm as _cm
+    _ramp = _cm.get_cmap("turbo")
+    cmap = {T: _ramp(0.08 + 0.84 * (i / max(len(Ts) - 1, 1)))
+            for i, T in enumerate(Ts)}
     for r in rows:
-        ax.scatter(r["val"], r["flat"], s=22+8*(r["nmax"]>1_500_000),
-                   c=cmap[r["T"]], alpha=0.7, edgecolor="none")
+        if r.get("therm_ok", True):
+            ax.scatter(r["val"], r["flat"], s=22+8*(r["nmax"]>1_500_000),
+                       color=cmap[r["T"]], alpha=0.7, edgecolor="none")
+        else:                       # build never equilibrated -> hollow grey,
+            ax.scatter(r["val"], r["flat"],          # same gate as flow_map
+                       s=22+8*(r["nmax"]>1_500_000), facecolor="none",
+                       edgecolor="#999999", alpha=0.8, linewidths=0.9)
     # target box
     ax.add_patch(mpatches.Rectangle((3.7, 0), 0.6, FLAT_TOL, fill=True,
                  color="#00d000", alpha=0.10))
     ax.add_patch(mpatches.Rectangle((3.7, 0), 0.6, FLAT_TOL, fill=False,
                  edgecolor="#00a000", lw=1.5, ls="--"))
     ax.axvline(4, color="#888", lw=0.8, ls=":")
-    for r in rows:
-        if 3.7 <= r["val"] <= 4.3 and r["flat"] < FLAT_TOL:
-            ax.annotate(f"k{r['k']} lb{r['lb']:g} T{r['T']:g}",
-                        (r["val"], r["flat"]), fontsize=6,
-                        xytext=(3, 3), textcoords="offset points")
+    # Candidates inside the target box: numbered markers on the points and a
+    # top-left ranking box — per-point text labels overlapped into an
+    # unreadable smear the moment several candidates clustered at (4, 0.2).
+    cand = sorted((r for r in rows
+                   if 3.7 <= r["val"] <= 4.3 and r["flat"] < FLAT_TOL
+                   and r.get("therm_ok", True)),
+                  key=lambda r: (abs(r["val"] - 4), r["flat"]))[:10]
+    for i, r in enumerate(cand, 1):
+        ax.annotate(str(i), (r["val"], r["flat"]), fontsize=6.5,
+                    fontweight="bold", ha="center", va="center",
+                    xytext=(0, 7), textcoords="offset points")
+    if cand:
+        lines = [f"{i}. k{r['k']} lb{r['lb']:g} T{r['T']:g}   "
+                 f"d={r['val']:.2f}  flat={r['flat']:.2f}"
+                 for i, r in enumerate(cand, 1)]
+        ax.text(0.015, 0.985, "best in 4D box\n" + "\n".join(lines),
+                transform=ax.transAxes, fontsize=6.5, va="top", ha="left",
+                family="monospace",
+                bbox=dict(boxstyle="round,pad=0.4", facecolor="#f4fff4",
+                          edgecolor="#00a000", alpha=0.9))
     ax.set_xlabel("d_s at largest N  (measured, not extrapolated)")
     ax.set_ylabel("flatness = in-plateau std of d_s   (low = real plateau)")
     ax.set_xlim(1, 7); ax.set_ylim(-0.05, 3.2)
     handles = [mpatches.Patch(color=cmap[T], label=f"T={T:g}") for T in Ts]
+
     handles.append(mpatches.Patch(color="#00d000", alpha=0.3, label="4D target box"))
+    if any(not r.get("therm_ok", True) for r in rows):
+        handles.append(mpatches.Patch(facecolor="none", edgecolor="#999999",
+                                      label="gated: not equilibrated"))
     ax.legend(handles=handles, fontsize=8, loc="upper right")
     ax.set_title("Every cell: is the plateau flat (low y) AND at 4 (x≈4)?\n"
                  "Cells near x=4 but high y are sloping windows whose mean "
@@ -135,7 +167,8 @@ def scatter_fig(rows, out):
     print("wrote", out)
 
 def leaderboard(rows, n=15):
-    cand = [r for r in rows if r["near4"] and r["is_flat"] and r["trust"]]
+    cand = [r for r in rows if r["near4"] and r["is_flat"] and r["trust"]
+            and r.get("therm_ok", True)]   # same gate as the figures
     cand.sort(key=lambda r: (abs(r["val"]-4), r["flat"]))
     print(f"\nTRUST-GATED candidates (flat, near 4, extrap agrees), best first "
           f"[{len(cand)}]:")
@@ -155,8 +188,15 @@ def main(argv=None):
     a = ap.parse_args(argv)
     rows = load(a.csv)
     print(f"loaded {len(rows)} cells")
-    map_fig(rows, "flow_map.png")
-    scatter_fig(rows, "flow_scatter.png")
+    # each figure isolated: one failing must never block the others, and the
+    # failure must say WHICH figure died (a silent half-write is how a stale
+    # chart hides for hours)
+    for fn, out in ((map_fig, "flow_map.png"),
+                    (scatter_fig, "flow_scatter.png")):
+        try:
+            fn(rows, out)
+        except Exception as e:
+            print(f"  [flow_charts] {out} FAILED: {type(e).__name__}: {e}")
     leaderboard(rows)
 
 if __name__ == "__main__":
